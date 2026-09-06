@@ -1,0 +1,98 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3307/telepsychiatric?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Africa/Kaduna
+    username: root
+    password: ${DATABASE_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.MySQL8Dialect
+
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+  jackson:
+    time-zone: Africa/Kaduna
+
+application:
+  base-url: http://localhost:8080
+
+  security:
+    jwt:
+      secret-key: ${JWT_SECRET}
+      expiration: 86400000
+
+  payment:
+    remitta:
+      api-key: ${REMITTA_API_KEY}
+      api-secret: ${REMITTA_API_SECRET}
+      base-url: https://api.remitta.com/v1
+      merchant-id: ${REMITTA_MERCHANT_ID}
+      callback-url: ${application.base-url}/api/v1/webhooks/payment/remitta
+  
+  # File Storage
+  file:
+    storage:
+      upload-dir: ./uploads
+      max-file-size: 10485760
+      max-image-size: 5242880
+      max-document-size: 20971520
+      allowed-image-types:
+        - image/jpeg
+        - image/png
+        - image/gif
+        - image/webp
+      allowed-document-types:
+        - application/pdf
+        - application/msword
+        - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+
+  # Notifications (Email + In-App only)
+  notification:
+    email:
+      enabled: true
+      from: ${MAIL_USERNAME}
+      from-name: Telepsychiatry System
+      max-retries: 3
+    in-app:
+      enabled: true
+      max-notifications-per-user: 100
+      retention-days: 90
+    scheduler:
+      enabled: true
+      reminder-lead-time-minutes: 1440
+      reminder-lead-time-minutes2: 60
+      reminder-lead-time-minutes3: 15
+
+logging:
+  level:
+    com.telepsych: DEBUG
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+

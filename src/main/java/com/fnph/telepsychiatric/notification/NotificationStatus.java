@@ -1,0 +1,27 @@
+package com.fnph.telepsychiatric.notification;
+
+public enum NotificationStatus {
+    APPOINTMENT_REMINDER,
+    APPOINTMENT_APPROVED,
+    APPOINTMENT_REJECTED,
+    APPOINTMENT_CANCELLED,
+    APPOINTMENT_RESCHEDULED,
+    CONSULTATION_READY,
+    PRESCRIPTION_READY,
+    INVESTIGATION_READY,
+    PAYMENT_SUCCESS,
+    PAYMENT_FAILURE,
+    SYSTEM_ALERT,
+    CENTRE_WALLET_ALERT,
+
+    EMAIL,
+    IN_APP,
+    SMS,
+    PUSH,
+
+    PENDING,
+    SENT,
+    DELIVERED,
+    READ,
+    FAILED
+}

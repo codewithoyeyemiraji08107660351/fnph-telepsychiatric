@@ -1,0 +1,18 @@
+package com.fnph.telepsychiatric.common;
+
+public enum Roles {
+    CENTRAL_ADMINISTRATOR,
+    HUB_COORDINATOR,
+    DOCTOR,
+    PHARMACIST,
+    LABORATORY_TECHNICIAN,
+    NURSING,
+    HIM,
+    FINANCE,
+    PATIENT,
+    CENTRE_HUB_COORDINATOR,
+    CENTRE_ASSISTANT_COORDINATOR,
+    CENTRE_PHARMACY,
+    CENTRE_LABORATORY,
+    CENTRE_HIM
+}
