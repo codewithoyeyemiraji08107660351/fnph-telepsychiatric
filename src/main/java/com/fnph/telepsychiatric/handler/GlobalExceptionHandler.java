@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.handler;
 
+import com.fnph.telepsychiatric.tenancy.CrossTenantAccessException;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
@@ -68,6 +69,28 @@ public class GlobalExceptionHandler {
                 .build();
 
         return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Cross-tenant access returns 404, never 403.
+     *
+     * A 403 confirms the record exists, which turns a URL into a way to
+     * discover that a named person is a patient at a specific centre. From
+     * outside, "not found" and "not yours" must be indistinguishable. The
+     * attempt itself is logged, where staff with the right permission can see
+     * it.
+     */
+    @ExceptionHandler(CrossTenantAccessException.class)
+    public ResponseEntity<ErrorResponse> handleCrossTenant(CrossTenantAccessException ex,
+                                                           HttpServletRequest request) {
+        log.warn("Cross-tenant access blocked: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.NOT_FOUND.value())
+                .error("Not Found")
+                .message("No such record")
+                .path(request.getRequestURI())
+                .build());
     }
 
     @ExceptionHandler(EntityNotFoundException.class)

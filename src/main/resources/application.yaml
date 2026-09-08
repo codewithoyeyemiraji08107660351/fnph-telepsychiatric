@@ -1,21 +1,58 @@
-server:
-  port: 8080
-
 spring:
+  application:
+    name: fnph-telepsychiatry
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
   datasource:
-    url: jdbc:mysql://localhost:3307/telepsychiatric?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Africa/Kaduna
-    username: root
-    password: ${DATABASE_PASSWORD}
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:telepsychiatric}?useSSL=${DB_USE_SSL:true}&requireSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:20}
+      minimum-idle: 5
+      connection-timeout: 30000
 
   jpa:
+    # Flyway owns the schema. Hibernate only checks that the entities match it.
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
-        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: false
+        # All timestamps are stored in UTC. Conversion to WAT happens at the presentation boundary.
+        jdbc:
+          time_zone: UTC
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+    # Forward only. An applied migration is never edited; a mistake is
+    # corrected by a new migration.
+    validate-on-migrate: true
+
+    # Refuse to start against a database that already has tables Flyway did
+    # not create. That situation means someone ran ddl-auto or applied SQL by
+    # hand, and continuing would produce two environments that silently differ.
+    baseline-on-migrate: false
+
+    # A migration that arrives with a lower version than one already applied is
+    # an error, not something to slot in quietly. Two developers numbering
+    # V7 at the same time must resolve it, not have the loser silently skipped.
+    out-of-order: false
+
+    # Flyway clean drops every object in the schema. On a database holding
+    # clinical records and payment history there is no circumstance in which
+    # that is the right command, so the capability is removed rather than
+    # trusted to nobody typing it.
+    clean-disabled: true
 
   servlet:
     multipart:
@@ -23,8 +60,8 @@ spring:
       max-request-size: 20MB
 
   mail:
-    host: smtp.gmail.com
-    port: 587
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT:587}
     username: ${MAIL_USERNAME}
     password: ${MAIL_PASSWORD}
     properties:
@@ -34,65 +71,224 @@ spring:
           starttls:
             enable: true
 
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+
   jackson:
-    time-zone: Africa/Kaduna
+    # Serialised timestamps are rendered in West Africa Time. Storage stays UTC.
+    time-zone: Africa/Lagos
+    default-property-inclusion: non_null
+
+server:
+  port: ${SERVER_PORT:8080}
+  forward-headers-strategy: framework
+  error:
+    include-stacktrace: never
+    include-message: never
 
 application:
-  base-url: http://localhost:8080
+  base-url: ${APP_BASE_URL:http://localhost:8080}
+  display-timezone: Africa/Lagos
+
+  cors:
+    # Explicit allow-list. Never a wildcard while credentials are enabled.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
 
   security:
     jwt:
       secret-key: ${JWT_SECRET}
-      expiration: 86400000
+      issuer: fnph-telepsychiatry
+      access-token-minutes: ${JWT_ACCESS_MINUTES:15}
+      refresh-token-days: ${JWT_REFRESH_DAYS:7}
+      inactivity-timeout-minutes: ${JWT_INACTIVITY_MINUTES:30}
+
+    encryption:
+      # AES-256 key for values that must be readable again, which today means
+      # TOTP shared secrets. Must decode to exactly 32 bytes.
+      #   openssl rand -base64 32
+      # Rotating this makes every enrolled second factor undecryptable, so every
+      # user has to enrol again. Treat it as permanent.
+      key: ${ENCRYPTION_KEY}
+
+    auth:
+      # Per-username lockout.
+      max-failed-attempts: 5
+      failure-window-minutes: 15
+      lockout-minutes: 30
+
+      # Per-address limit. Higher, because a shared hospital connection puts a
+      # whole department behind one address and locking it would take them all
+      # offline. Both limits are needed: username-only lockout lets an attacker
+      # spray one password across many accounts, and lets them lock a named
+      # clinician out on demand.
+      max-failed-attempts-per-ip: 30
+
+      # Invitations are long-lived; a new member of staff may not be at a desk
+      # today. Reset links are short-lived; the user asked seconds ago.
+      activation-token-hours: 72
+      password-reset-token-minutes: 60
+
+      # Six digits is a small space, so the second-factor threshold is tighter
+      # than the password one.
+      max-mfa-attempts: 5
+      mfa-lockout-minutes: 15
+      mfa-challenge-minutes: 5
+      recovery-code-count: 10
+
+      # Length, not composition. See PasswordPolicy for why.
+      min-password-length: 12
+      mfa-issuer: FNPH Kaduna Telepsychiatry
+
+    enrolment:
+      # Two-way limiting, same reasoning as sign-in. Per-number catches a
+      # patient mistyping; per-address catches someone walking the EHR number
+      # range, which is the attack that needs no account at all.
+      max-lookup-failures-per-number: 5
+      max-lookup-failures-per-ip: 10
+      lookup-window-minutes: 30
+      contact-code-minutes: 10
+      max-code-attempts: 5
+
+    supervision:
+      # An administrator who walks away must not leave a supervised session
+      # running. Long enough to answer a support question, short enough that
+      # forgetting to close it is not a standing grant.
+      max-duration-minutes: 30
 
   payment:
-    remitta:
-      api-key: ${REMITTA_API_KEY}
-      api-secret: ${REMITTA_API_SECRET}
-      base-url: https://api.remitta.com/v1
-      merchant-id: ${REMITTA_MERCHANT_ID}
-      callback-url: ${application.base-url}/api/v1/webhooks/payment/remitta
-  
-  # File Storage
-  file:
-    storage:
-      upload-dir: ./uploads
-      max-file-size: 10485760
-      max-image-size: 5242880
-      max-document-size: 20971520
-      allowed-image-types:
-        - image/jpeg
-        - image/png
-        - image/gif
-        - image/webp
-      allowed-document-types:
-        - application/pdf
-        - application/msword
-        - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+    remita:
+      base-url: ${REMITA_BASE_URL}
+      merchant-id: ${REMITA_MERCHANT_ID}
+      service-type-id: ${REMITA_SERVICE_TYPE_ID}
+      api-key: ${REMITA_API_KEY}
+      api-token: ${REMITA_API_TOKEN}
+      # The callback URL carries this as a path segment, because Remita sends
+      # no signature header. It makes the endpoint non-obvious; it is not the
+      # security control. Re-verifying server-to-server is.
+      webhook-secret: ${REMITA_WEBHOOK_SECRET}
+      callback-url: ${application.base-url}/api/v1/webhooks/remita/${REMITA_WEBHOOK_SECRET}
+      response-url: ${APP_PORTAL_URL:http://localhost:5173}/portal/payment/return
+      connect-timeout-seconds: 10
+      read-timeout-seconds: 30
 
-  # Notifications (Email + In-App only)
+  video:
+    provider: ${VIDEO_PROVIDER:daily}
+    daily:
+      base-url: ${DAILY_BASE_URL:https://api.daily.co/v1}
+      # Server-side only. This key creates rooms and mints tokens on the FNPH
+      # account. In a browser it is readable from the page source, and whoever
+      # read it could mint a token for any room including a live consultation.
+      # The browser gets a meeting token instead: one room, one participant,
+      # one appointment's length.
+      api-key: ${DAILY_API_KEY:}
+      domain: ${DAILY_DOMAIN:}
+      webhook-secret: ${DAILY_WEBHOOK_SECRET:}
+      connect-timeout-seconds: 10
+      read-timeout-seconds: 20
+      # Covers clock skew and a clinician finishing a sentence, not a session
+      # running over. The room expiring at the provider is the second
+      # enforcement of a fixed slot end.
+      room-grace-minutes: 5
+
+  storage:
+    endpoint: ${S3_ENDPOINT}
+    region: ${S3_REGION:eu-west-1}
+    bucket: ${S3_BUCKET}
+    access-key: ${S3_ACCESS_KEY}
+    secret-key: ${S3_SECRET_KEY}
+    max-file-size: 20971520
+    allowed-image-types: image/jpeg,image/png,image/webp
+    allowed-document-types: application/pdf
+
   notification:
     email:
       enabled: true
-      from: ${MAIL_USERNAME}
-      from-name: Telepsychiatry System
+      from: ${MAIL_FROM}
+      from-name: FNPH Kaduna Telepsychiatry
       max-retries: 3
     in-app:
       enabled: true
-      max-notifications-per-user: 100
       retention-days: 90
-    scheduler:
-      enabled: true
-      reminder-lead-time-minutes: 1440
-      reminder-lead-time-minutes2: 60
-      reminder-lead-time-minutes3: 15
+    reminder-lead-minutes: 1440,60,15
 
-logging:
-  level:
-    com.telepsych: DEBUG
+  # Every clinical timing value is a separate key. The source documents conflate
+  # these three; conflating them in configuration reproduces the bug.
+  clinical:
+    room-open-lead-minutes: 15
+    joining-grace-minutes: 5
+    no-show-cutoff-minutes: 15
+    session-minutes-fnph: 30
+    session-minutes-centre: 30
+    warning-one-minutes-remaining: 15
+    warning-two-minutes-remaining: 10
+    slot-hold-ttl-minutes: 10
+    cancellation-notice-hours: 24
+    prescription-validity-days: 7
+    investigation-validity-days: 7
+    prescription-max-downloads: 1
+    investigation-max-downloads: 1
+    consultation-fee-ngn: 10000
+    centre-booking-charge-ngn: 5000
+    wallet-warning-percent: 20
+    wallet-critical-percent: 10
+    clinical-emergency-number: "08032722243"
+    # Recording stays off until FNPH approves consent, retention, access,
+    # data location and deletion policy.
+    recording-enabled: false
+
+# Outbound protection for Remita. An unprotected call to a third party will
+# eventually exhaust the request threads and take the clinical portal down with
+# it. A patient who cannot pay for ten minutes is a far smaller problem than a
+# doctor who cannot open a consultation.
+resilience4j:
+  circuitbreaker:
+    instances:
+      video:
+        slidingWindowSize: 20
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+      remita:
+        slidingWindowSize: 20
+        failureRateThreshold: 50
+        waitDurationInOpenState: 60s
+        permittedNumberOfCallsInHalfOpenState: 3
+  retry:
+    instances:
+      video:
+        maxAttempts: 2
+        waitDuration: 1s
+      remita:
+        maxAttempts: 3
+        waitDuration: 2s
+        exponentialBackoffMultiplier: 2
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: fnph-telepsychiatry
 
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
-
+logging:
+  level:
+    root: INFO
+    com.fnph.telepsychiatric: INFO

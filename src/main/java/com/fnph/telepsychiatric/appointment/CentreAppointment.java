@@ -4,6 +4,11 @@ import com.fnph.telepsychiatric.center.Center;
 import com.fnph.telepsychiatric.common.BaseEntity;
 import com.fnph.telepsychiatric.patient.CentrePatient;
 import com.fnph.telepsychiatric.user.Users;
+import com.fnph.telepsychiatric.tenancy.TenantFilters;
+import com.fnph.telepsychiatric.tenancy.TenantOwned;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.ParamDef;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -11,10 +16,18 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "centre_appointments")
+@Table(name = "centre_appointments", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_centre_appointments_reference", columnNames = "reference")
+}, indexes = {
+        @Index(name = "idx_centre_appointments_centre", columnList = "centre_id,appointment_date"),
+        @Index(name = "idx_centre_appointments_status", columnList = "status")
+})
 @Getter
 @Setter
-public class CentreAppointment extends BaseEntity {
+@FilterDef(name = TenantFilters.CENTRE_TENANT,
+        parameters = @ParamDef(name = TenantFilters.CENTRE_ID_PARAM, type = Long.class))
+@Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
+public class CentreAppointment extends BaseEntity implements TenantOwned {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "centre_patient_id", nullable = false)
@@ -49,6 +62,9 @@ public class CentreAppointment extends BaseEntity {
     @Column(name = "room", length = 50)
     private String room;
 
+    @Column(name = "reference", nullable = false, length = 50)
+    private String reference;
+
     @Column(name = "approved_by")
     private String approvedBy;
 
@@ -69,4 +85,26 @@ public class CentreAppointment extends BaseEntity {
 
     @Column(name = "no_show_reason", columnDefinition = "TEXT")
     private String noShowReason;
+
+    @Column(name = "join_window_opens_at")
+    private LocalDateTime joinWindowOpensAt;
+
+    @Column(name = "scheduled_end_at")
+    private LocalDateTime scheduledEndAt;
+
+    @Column(name = "no_show_at")
+    private LocalDateTime noShowAt;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version = 0L;
+
+    /**
+     * Tenant key for isolation enforcement. Null means this row belongs to the
+     * FNPH pathway rather than to a centre.
+     */
+    @Override
+    public Long resolveCentreId() {
+        return centre == null ? null : centre.getId();
+    }
 }

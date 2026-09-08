@@ -1,0 +1,23 @@
+spring:
+  jpa:
+    show-sql: false
+  devtools:
+    restart:
+      enabled: false
+
+server:
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+logging:
+  level:
+    root: WARN
+    com.fnph.telepsychiatric: INFO

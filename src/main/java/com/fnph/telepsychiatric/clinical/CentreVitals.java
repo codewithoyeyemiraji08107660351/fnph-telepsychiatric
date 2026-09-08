@@ -3,6 +3,12 @@ package com.fnph.telepsychiatric.clinical;
 import com.fnph.telepsychiatric.appointment.CentreAppointment;
 import com.fnph.telepsychiatric.common.BaseEntity;
 import com.fnph.telepsychiatric.patient.CentrePatient;
+import com.fnph.telepsychiatric.center.Center;
+import com.fnph.telepsychiatric.tenancy.TenantFilters;
+import com.fnph.telepsychiatric.tenancy.TenantOwned;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.ParamDef;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -13,7 +19,19 @@ import java.time.LocalDateTime;
 @Table(name = "centre_vitals")
 @Getter
 @Setter
-public class CentreVitals extends BaseEntity {
+@FilterDef(name = TenantFilters.CENTRE_TENANT,
+           parameters = @ParamDef(name = TenantFilters.CENTRE_ID_PARAM, type = Long.class))
+@Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
+public class CentreVitals extends BaseEntity implements TenantOwned {
+    /**
+     * Denormalised tenant key. Present so tenant isolation can be enforced as a
+     * single repository-layer filter rather than a join that a future query
+     * might omit. A scoping rule that depends on remembering a join fails open.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "centre_id", nullable = false)
+    private Center centre;
+
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "centre_patient_id", nullable = false)
@@ -64,4 +82,13 @@ public class CentreVitals extends BaseEntity {
 
     @Column(name = "notes", columnDefinition = "TEXT")
     private String notes;
+
+    /**
+     * Tenant key for isolation enforcement. Null means this row belongs to the
+     * FNPH pathway rather than to a centre.
+     */
+    @Override
+    public Long resolveCentreId() {
+        return centre == null ? null : centre.getId();
+    }
 }

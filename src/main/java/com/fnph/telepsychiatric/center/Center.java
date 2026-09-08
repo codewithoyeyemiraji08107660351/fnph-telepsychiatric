@@ -1,21 +1,23 @@
 package com.fnph.telepsychiatric.center;
 
-import com.fnph.telepsychiatric.common.BaseEntity;
+import com.fnph.telepsychiatric.common.SoftDeletableEntity;
 import com.fnph.telepsychiatric.patient.CentrePatient;
 import com.fnph.telepsychiatric.user.Users;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Entity
 @Table(name = "centres")
 @Getter
 @Setter
-public class Center extends BaseEntity {
+public class Center extends SoftDeletableEntity {
 
     @Column(name = "code", unique = true, nullable = false, length = 20)
     private String code;
@@ -41,30 +43,38 @@ public class Center extends BaseEntity {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
-    @Column(name = "wallet_balance", precision = 19, scale = 2)
-    private BigDecimal walletBalance = BigDecimal.ZERO;
-
-    @Column(name = "low_balance_threshold", precision = 19, scale = 2)
-    private BigDecimal lowBalanceThreshold;
-
-    @Column(name = "critical_balance_threshold", precision = 19, scale = 2)
-    private BigDecimal criticalBalanceThreshold;
-
     @OneToMany(mappedBy = "centre", cascade = CascadeType.ALL)
     private List<Users> staff = new ArrayList<>();
 
     @OneToMany(mappedBy = "centre", cascade = CascadeType.ALL)
     private List<CentrePatient> patients = new ArrayList<>();
 
-    @Column(name = "created_by")
-    private String createdBy;
+    /**
+     * Optional local roles, one row per capability. Replaces three booleans,
+     * which recorded the answer and destroyed the review that produced it.
+     */
+    @OneToMany(mappedBy = "centre", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
+    private Set<CentreCapability> capabilities = new HashSet<>();
 
-    @Column(name = "has_pharmacy_capability", nullable = false)
-    private Boolean hasPharmacyCapability = false;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    private CentreStatus status = CentreStatus.SETUP;
 
-    @Column(name = "has_laboratory_capability", nullable = false)
-    private Boolean hasLaboratoryCapability = false;
+    @Column(name = "activated_at")
+    private LocalDateTime activatedAt;
 
-    @Column(name = "has_him_capability", nullable = false)
-    private Boolean hasHimCapability = false;
+    @Column(name = "activated_by", length = 100)
+    private String activatedBy;
+
+    @Column(name = "suspended_at")
+    private LocalDateTime suspendedAt;
+
+    @Column(name = "suspended_by", length = 100)
+    private String suspendedBy;
+
+    @Column(name = "suspend_reason", length = 500)
+    private String suspendReason;
+
+    @Column(name = "default_consultation_minutes", nullable = false)
+    private Integer defaultConsultationMinutes = 30;
 }

@@ -1,0 +1,55 @@
+# MySQL server settings that the application depends on being true.
+#
+# These are not preferences. Each one prevents a specific class of defect
+# that is expensive to detect after the fact.
+
+[mysqld]
+
+# --- Character set -----------------------------------------------------
+# utf8mb4 is real UTF-8. MySQL's legacy "utf8" is 3-byte and silently
+# mangles anything outside the basic multilingual plane. Patient names in
+# this system come from Hausa, Yoruba and Igbo among others, and a clinical
+# note can contain anything a clinician types.
+character-set-server          = utf8mb4
+collation-server              = utf8mb4_unicode_ci
+
+# --- Time --------------------------------------------------------------
+# The server stores UTC. Conversion to West Africa Time happens in the
+# clients. A server that stores local time produces appointments that move
+# when the host is rebuilt in a different region.
+default-time-zone             = '+00:00'
+
+# --- Strict mode -------------------------------------------------------
+# Without STRICT_TRANS_TABLES, MySQL silently truncates an oversized value
+# and writes a warning nobody reads. A clinical note quietly cut at 65,535
+# characters is a patient safety issue, not a formatting problem.
+# NO_ZERO_DATE and NO_ZERO_IN_DATE stop '0000-00-00' ever reaching a
+# date-of-birth column.
+sql-mode                      = STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+
+# --- Binary logging ----------------------------------------------------
+# Point-in-time recovery. A nightly dump alone gives a recovery point of up
+# to 24 hours; the target is 15 minutes. The binary log is what closes that
+# gap, by replaying every write since the last full backup.
+server-id                     = 1
+log-bin                       = mysql-bin
+binlog-format                 = ROW
+binlog-row-image              = FULL
+binlog-expire-logs-seconds    = 1209600
+sync-binlog                   = 1
+
+# --- Durability --------------------------------------------------------
+# Flush every commit to disk. Slower than the alternative, and correct for
+# a system holding payment records and clinical documents.
+innodb-flush-log-at-trx-commit = 1
+
+# --- Sizing (development values) ---------------------------------------
+innodb-buffer-pool-size       = 512M
+max-connections               = 200
+innodb-lock-wait-timeout      = 20
+
+# --- Visibility --------------------------------------------------------
+slow-query-log                = 1
+slow-query-log-file           = /var/lib/mysql/slow.log
+long-query-time               = 1
+log-error-verbosity           = 2

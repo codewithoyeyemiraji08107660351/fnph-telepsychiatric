@@ -3,7 +3,7 @@ package com.fnph.telepsychiatric.patient;
 import com.fnph.telepsychiatric.appointment.Appointment;
 import com.fnph.telepsychiatric.clinical.Vitals;
 import com.fnph.telepsychiatric.consultation.Consultation;
-import com.fnph.telepsychiatric.common.BaseEntity;
+import com.fnph.telepsychiatric.common.SoftDeletableEntity;
 import com.fnph.telepsychiatric.user.Users;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -15,12 +15,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "patients")
+@Table(name = "patients", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_patients_ehr_number", columnNames = "ehr_number")
+})
 @Getter
 @Setter
-public class Patient extends BaseEntity {
+public class Patient extends SoftDeletableEntity {
 
-    @Column(name = "ehr_number", unique = true, nullable = false, length = 50)
+    @Column(name = "ehr_number", nullable = false, length = 50)
     private String ehrNumber;
 
     @Column(name = "first_name", nullable = false, length = 50)
@@ -41,12 +43,6 @@ public class Patient extends BaseEntity {
     @Column(name = "phone_number", length = 20)
     private String phoneNumber;
 
-    @Column(name = "email", length = 100)
-    private String email;
-
-    @Column(name = "address", length = 255)
-    private String address;
-
     @Column(name = "is_eligible", nullable = false)
     private Boolean isEligible = false;
 
@@ -55,12 +51,6 @@ public class Patient extends BaseEntity {
 
     @Column(name = "eligibility_verified_by")
     private String eligibilityVerifiedBy;
-
-    @Column(name = "consent_version", length = 20)
-    private String consentVersion;
-
-    @Column(name = "consent_accepted_at")
-    private LocalDateTime consentAcceptedAt;
 
     @Column(name = "is_physically_assessed", nullable = false)
     private Boolean isPhysicallyAssessed = false;
@@ -80,13 +70,30 @@ public class Patient extends BaseEntity {
     @OneToMany(mappedBy = "patient", cascade = CascadeType.ALL)
     private List<Vitals> vitalsRecords = new ArrayList<>();
 
-    @Column(name = "emergency_contact_name", length = 100)
-    private String emergencyContactName;
+    /**
+     * The verification import snapshot this account was activated against.
+     * Populated by the EHR verification module.
+     */
+    @Column(name = "source_import_id")
+    private Long sourceImportId;
 
-    @Column(name = "emergency_contact_phone", length = 20)
-    private String emergencyContactPhone;
+    @Column(name = "contact_verified_at")
+    private LocalDateTime contactVerifiedAt;
 
-    @Column(name = "emergency_contact_relation", length = 50)
-    private String emergencyContactRelation;
+    @Column(name = "activated_at")
+    private LocalDateTime activatedAt;
 
+    /**
+     * Set when a later EHR import changes the name or phone on an already
+     * active account. Silent rebinding is an account-takeover path, so the
+     * change is flagged to Health Information Management instead of applied.
+     */
+    @Column(name = "drift_flagged", nullable = false)
+    private Boolean driftFlagged = false;
+
+    @Column(name = "drift_flagged_at")
+    private LocalDateTime driftFlaggedAt;
+
+    @Column(name = "drift_details", columnDefinition = "TEXT")
+    private String driftDetails;
 }

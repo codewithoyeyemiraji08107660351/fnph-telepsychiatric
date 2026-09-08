@@ -31,3 +31,14 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Secrets
+.env
+.env.local
+*.pem
+*.p12
+
+# Backups
+backups/
+*.sql.gz
+*.sql.gz.sha256
