@@ -17,8 +17,6 @@ import java.time.LocalDateTime;
 @Table(name = "centre_consultation_notes")
 @Getter
 @Setter
-@FilterDef(name = TenantFilters.CENTRE_TENANT,
-           parameters = @ParamDef(name = TenantFilters.CENTRE_ID_PARAM, type = Long.class))
 @Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
 public class CentreConsultationNote extends BaseEntity implements TenantOwned {
     /**

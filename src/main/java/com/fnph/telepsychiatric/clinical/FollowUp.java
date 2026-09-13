@@ -33,8 +33,6 @@ import java.time.LocalTime;
 })
 @Getter
 @Setter
-@FilterDef(name = TenantFilters.CENTRE_TENANT,
-           parameters = @ParamDef(name = TenantFilters.CENTRE_ID_PARAM, type = Long.class))
 @Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
 public class FollowUp extends BaseEntity implements TenantOwned {
     /**

@@ -317,8 +317,8 @@ public class AuthenticationService {
     // Internals
     // -----------------------------------------------------------------
 
-    String issueToken(Users user, AccountTokenPurpose purpose,
-                      LocalDateTime expiresAt, RequestContext context) {
+    public String issueToken(Users user, AccountTokenPurpose purpose,
+                             LocalDateTime expiresAt, RequestContext context) {
         accountTokenRepository.invalidateOutstanding(user.getId(), purpose, LocalDateTime.now());
 
         String raw = Tokens.generate();

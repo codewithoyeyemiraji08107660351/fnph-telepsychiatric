@@ -40,6 +40,10 @@ public class Center extends SoftDeletableEntity {
     @Column(name = "email", length = 100)
     private String email;
 
+
+    @Column(name = "phone_contact", nullable = false)
+    private  String contactPhone;
+
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 

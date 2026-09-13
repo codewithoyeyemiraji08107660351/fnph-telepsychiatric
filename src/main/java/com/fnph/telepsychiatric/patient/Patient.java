@@ -43,6 +43,12 @@ public class Patient extends SoftDeletableEntity {
     @Column(name = "phone_number", length = 20)
     private String phoneNumber;
 
+    @Column(name = "email", length = 50)
+    private String email;
+
+    @Column(name = "address", columnDefinition = "TEXT")
+    private String address;
+
     @Column(name = "is_eligible", nullable = false)
     private Boolean isEligible = false;
 

@@ -69,16 +69,6 @@ public class SecurityUser implements UserDetails {
         return authorities;
     }
 
-    @Override
-    public String getPassword() {
-        return password;
-    }
-
-    @Override
-    public String getUsername() {
-        return username;
-    }
-
     public boolean hasPermission(String code) {
         return permissions.contains(code);
     }
@@ -89,6 +79,16 @@ public class SecurityUser implements UserDetails {
 
     public boolean isPatientScoped() {
         return scope == RoleScope.PATIENT;
+    }
+
+    @Override
+    public String getPassword() {
+        return password;
+    }
+
+    @Override
+    public String getUsername() {
+        return username;
     }
 
     @Override

@@ -12,7 +12,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
 @EnableAsync
 public class TelepsychiatricApplication {
 
-    public static void main(String[] args) {
-        SpringApplication.run(TelepsychiatricApplication.class, args);
-    }
+	public static void main(String[] args) {
+		SpringApplication.run(TelepsychiatricApplication.class, args);
+	}
 }

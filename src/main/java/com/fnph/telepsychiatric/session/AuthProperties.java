@@ -18,6 +18,8 @@ public class AuthProperties {
     /** How long a locked account stays locked. */
     private int lockoutMinutes = 30;
 
+    private boolean mfaRequired = true;
+
     /**
      * Failed attempts from one address across all usernames.
      *

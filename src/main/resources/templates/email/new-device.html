@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: html(body=~{::body-content})}">
+<body>
+<div th:fragment="body-content">
+
+    <p style="margin:0 0 16px;">Hello <span th:text="${recipientName}">Aisha Bello</span>,</p>
+
+    <p style="margin:0 0 20px;">
+        Your account was signed into from a device we have not seen before.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="background:#f8f9fa;border-radius:6px;margin:0 0 20px;">
+        <tr>
+            <td style="padding:14px 16px;font-size:14px;line-height:1.7;color:#495057;">
+                <strong>Device</strong> <span th:text="${deviceLabel}">Chrome on Windows</span><br>
+                <strong>Address</strong> <span th:text="${ipAddress}">197.210.0.0</span><br>
+                <strong>Time</strong> <span th:text="${signedInAt}">7 September 2026 at 09:02</span>
+            </td>
+        </tr>
+    </table>
+
+    <p style="margin:0 0 16px;">
+        If this was you, nothing to do.
+    </p>
+
+    <p style="margin:0;">
+        <strong>If it was not</strong>, change your password now and sign out every device
+        from your account settings, then tell your administrator.
+    </p>
+
+</div>
+</body>
+</html>

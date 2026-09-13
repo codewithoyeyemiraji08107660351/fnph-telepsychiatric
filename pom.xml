@@ -176,7 +176,8 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <optional>true</optional>
+            <version>1.18.38</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
@@ -191,6 +192,28 @@
             breaks the first time a patient name contains one, which on a
             Nigerian patient list is immediately.
         -->
+        <!--
+            PDF rendering for issued documents.
+
+            openhtmltopdf over PDFBox, driven by Thymeleaf templates. Chosen over
+            iText deliberately: iText 7 is AGPL, which would oblige FNPH to
+            publish source for anything linking it. openhtmltopdf is LGPL 2.1 and
+            PDFBox is Apache 2.0, both safe to link from a closed application.
+
+            HTML templates also mean a prescription layout can be changed by
+            someone who is not a Java developer.
+        -->
+        <dependency>
+            <groupId>com.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+            <version>1.0.10</version>
+        </dependency>
+        <dependency>
+            <groupId>com.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-svg-support</artifactId>
+            <version>1.0.10</version>
+        </dependency>
+
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-csv</artifactId>

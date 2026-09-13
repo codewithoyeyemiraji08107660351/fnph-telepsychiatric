@@ -1,5 +1,7 @@
 package com.fnph.telepsychiatric.user;
 
+import com.fnph.telepsychiatric.audit.AuditAction;
+import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.authz.*;
 import com.fnph.telepsychiatric.center.CapabilityType;
 import com.fnph.telepsychiatric.center.Center;
@@ -7,6 +9,7 @@ import com.fnph.telepsychiatric.center.CenterRepository;
 import com.fnph.telepsychiatric.center.CentreCapabilityRepository;
 import com.fnph.telepsychiatric.email.AccountEmailService;
 import com.fnph.telepsychiatric.security.CurrentUser;
+import com.fnph.telepsychiatric.security.TokenType;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
 import com.fnph.telepsychiatric.session.*;
 import com.fnph.telepsychiatric.user.api.CreateStaffUserRequest;
@@ -57,6 +60,8 @@ public class StaffInvitationService {
     private final MfaService mfaService;
     private final PasswordEncoder passwordEncoder;
     private final AuthProperties authProperties;
+    private final AccountTokenRepository accountTokenRepository;
+    private final AuditService auditService;
 
     @Transactional
     public StaffUserResponse invite(CreateStaffUserRequest request,
@@ -229,5 +234,38 @@ public class StaffInvitationService {
                 centre == null ? null : centre.getName(),
                 Boolean.TRUE.equals(user.getMfaEnabled()),
                 user.getInvitedAt(), user.getInvitedBy(), expiresAt, user.getActivatedAt());
+    }
+
+    /**
+     * Sends a reset link on somebody else's behalf.
+     *
+     * No password is set here and none is returned. An administrator who could
+     * read or choose a clinician's password could sign in as them, and every
+     * clinical action they took would be indistinguishable from the real
+     * person's. The link goes to the account's own address.
+     *
+     * Every session on the account is revoked, because a reset is normally
+     * requested when something is wrong, and leaving the old sessions alive
+     * would mean whoever already had one keeps it.
+     */
+    @Transactional
+    public void sendAdministrativeReset(String userPublicId, String reason) {
+        Users user = userRepository.findByPublicId(userPublicId)
+                .orElseThrow(() -> new IllegalArgumentException("No such account"));
+
+        String actor = CurrentUser.usernameOrSystem();
+
+        // null = keep no session
+        sessionService.revokeAll(user.getId(), null,
+                "Administrative password reset by " + actor + ": " + reason);
+
+        user.setMustChangePassword(true);
+        userRepository.save(user);
+
+        authenticationService.requestPasswordReset(user.getUsername(),
+                new AuthenticationService.RequestContext(null, null, null, actor));
+
+        log.info("Administrative password reset issued for {} by {}: {}",
+                user.getUsername(), actor, reason);
     }
 }

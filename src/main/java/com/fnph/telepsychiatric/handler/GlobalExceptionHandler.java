@@ -2,6 +2,7 @@ package com.fnph.telepsychiatric.handler;
 
 import com.fnph.telepsychiatric.tenancy.CrossTenantAccessException;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;

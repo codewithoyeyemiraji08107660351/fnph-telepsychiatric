@@ -1,6 +1,7 @@
 package com.fnph.telepsychiatric.consultation;
 
 import com.fnph.telepsychiatric.common.BaseEntity;
+import com.fnph.telepsychiatric.storage.StorageArea;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -36,11 +37,12 @@ public class Transcript extends BaseEntity {
     @JoinColumn(name = "recording_id")
     private Recording recording;
 
-    @Column(name = "storage_bucket", length = 100)
-    private String storageBucket;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "storage_area", length = 40)
+    private StorageArea storageArea;
 
-    @Column(name = "storage_key", length = 500)
-    private String storageKey;
+    @Column(name = "storage_path", length = 500)
+    private String storagePath;
 
     @Column(name = "status", nullable = false, length = 20)
     private String status = "DRAFT";

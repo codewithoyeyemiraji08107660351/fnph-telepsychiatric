@@ -13,6 +13,8 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -50,6 +52,49 @@ public class DocumentController {
         return ResponseEntity.ok(
                 documentService.forPatient(CurrentUser.require().getPatientId())
                         .stream().map(this::toResponse).toList());
+    }
+
+    @GetMapping(value = "/api/v1/documents/{documentPublicId}/file",
+            produces = MediaType.APPLICATION_PDF_VALUE)
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).DOCUMENT_DOWNLOAD)")
+    @Operation(
+            summary = "Download the document file",
+            description = """
+                    Claims one download and streams the PDF.
+
+                    **The allowance is claimed before the bytes are read, and the read is
+                    verified.** If the file fails its integrity check the download fails
+                    rather than serving a corrupted prescription, and that failure is
+                    logged for ICT.
+
+                    Served as an attachment, never inline. Inline would let a crafted file
+                    run script in the application's origin.
+
+                    Use `/download` if you only want to claim the allowance and show the
+                    result; use this when you want the file.
+
+                    **Requires** `document.download`, and the document must be yours.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The PDF."),
+            @ApiResponse(responseCode = "400",
+                    description = "Allowance used, expired, withdrawn, or not yet rendered.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<InputStreamResource> file(
+            @PathVariable String documentPublicId, HttpServletRequest http) {
+
+        IssuedDocument claimed = documentService.claimDownload(
+                documentPublicId, clientIp(http), http.getHeader("User-Agent"));
+
+        IssuedDocumentService.RenderedFile rendered = documentService.openRendered(claimed);
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .contentLength(rendered.sizeBytes())
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + rendered.filename() + "\"")
+                .body(new InputStreamResource(rendered.stream()));
     }
 
     @PostMapping("/api/v1/documents/{documentPublicId}/download")

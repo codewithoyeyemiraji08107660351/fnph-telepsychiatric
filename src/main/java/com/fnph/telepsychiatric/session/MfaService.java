@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.core.env.Environment;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -35,11 +36,34 @@ public class MfaService {
     private final TotpService totpService;
     private final SecretEncryptor encryptor;
     private final AuthProperties properties;
+    private final Environment environment;
 
     /** Staff and centre accounts must hold a second factor. Patients must not be forced to. */
     public boolean isRequiredFor(RoleScope scope) {
-        return scope == RoleScope.FNPH || scope == RoleScope.CENTRE;
+        if (scope != RoleScope.FNPH && scope != RoleScope.CENTRE) {
+            return false;
+        }
+        // Dev bypass. Defaults to true, so an unset value leaves MFA on, and a
+        // startup guard below refuses to run with it off outside dev.
+        if (!properties.isMfaRequired()) {
+            log.warn("MFA is disabled by configuration. This must never be true "
+                    + "outside local development.");
+            return false;
+        }
+        return true;
     }
+
+    @jakarta.annotation.PostConstruct
+    void refuseToStartWithMfaDisabledOutsideDev() {
+        if (!properties.isMfaRequired()
+                && !environment.acceptsProfiles(
+                org.springframework.core.env.Profiles.of("dev", "test"))) {
+            throw new IllegalStateException(
+                    "MFA is disabled on a non-dev profile. Refusing to start. "
+                            + "Set MFA_REQUIRED=true.");
+        }
+    }
+
 
     @Transactional(readOnly = true)
     public boolean isEnrolled(Long userId) {

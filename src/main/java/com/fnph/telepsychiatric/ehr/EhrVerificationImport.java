@@ -34,6 +34,19 @@ public class EhrVerificationImport extends BaseEntity {
     private Long fileSizeBytes;
 
     /**
+     * Where the raw snapshot file is kept.
+     *
+     * Retained because it is the evidence behind every patient activated from
+     * this import. On a filesystem there is no reason not to.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "storage_area", length = 40)
+    private com.fnph.telepsychiatric.storage.StorageArea storageArea;
+
+    @Column(name = "storage_path", length = 500)
+    private String storagePath;
+
+    /**
      * When the hospital extracted the file, supplied by the uploader.
      *
      * Not the upload date. A file extracted in June and uploaded in September

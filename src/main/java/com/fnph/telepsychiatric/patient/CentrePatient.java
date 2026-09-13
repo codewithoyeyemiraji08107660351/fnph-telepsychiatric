@@ -3,19 +3,16 @@ package com.fnph.telepsychiatric.patient;
 import com.fnph.telepsychiatric.appointment.CentreAppointment;
 import com.fnph.telepsychiatric.center.Center;
 import com.fnph.telepsychiatric.clinical.CentreVitals;
-import com.fnph.telepsychiatric.consultation.CentreConsultation;
 import com.fnph.telepsychiatric.common.SoftDeletableEntity;
+import com.fnph.telepsychiatric.consultation.CentreConsultation;
 import com.fnph.telepsychiatric.tenancy.TenantFilters;
 import com.fnph.telepsychiatric.tenancy.TenantOwned;
-import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
-import org.hibernate.annotations.ParamDef;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.Filter;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,8 +25,6 @@ import java.util.List;
 })
 @Getter
 @Setter
-@FilterDef(name = TenantFilters.CENTRE_TENANT,
-           parameters = @ParamDef(name = TenantFilters.CENTRE_ID_PARAM, type = Long.class))
 @Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
 public class CentrePatient extends SoftDeletableEntity implements TenantOwned {
 
@@ -60,18 +55,6 @@ public class CentrePatient extends SoftDeletableEntity implements TenantOwned {
     @Column(name = "address", length = 255)
     private String address;
 
-    @Column(name = "referral_reason", columnDefinition = "TEXT")
-    private String referralReason;
-
-    @Column(name = "assessment", columnDefinition = "TEXT")
-    private String assessment;
-
-    @Column(name = "current_condition", columnDefinition = "TEXT")
-    private String currentCondition;
-
-    @Column(name = "relevant_medicines", columnDefinition = "TEXT")
-    private String relevantMedicines;
-
     /**
      * Narrative only. A centre patient who also holds an FNPH record is still
      * treated strictly as a centre referral, and the offline FNPH record is
@@ -80,12 +63,6 @@ public class CentrePatient extends SoftDeletableEntity implements TenantOwned {
      */
     @Column(name = "fnph_ehr_number", length = 50)
     private String fnphEhrNumber;
-
-    @Column(name = "consent_version", length = 20)
-    private String consentVersion;
-
-    @Column(name = "consent_accepted_at")
-    private LocalDateTime consentAcceptedAt;
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;

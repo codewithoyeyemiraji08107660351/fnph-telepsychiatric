@@ -151,6 +151,30 @@ public class HelpdeskController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/tickets/{ticketPublicId}/assign")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).TICKET_ASSIGN)")
+    @Operation(
+            summary = "Assign a ticket to an agent",
+            description = """
+                    Takes a ticket off the shared queue and puts it with a named person.
+
+                    **Different from escalation.** Escalating moves a ticket to another team;
+                    assigning keeps it here and says who is working it. Without this, two
+                    agents open the same ticket and both reply.
+
+                    Assigning does not start the first-response clock. That is measured from
+                    when the ticket arrived, because a patient waiting does not care when
+                    somebody picked it up.
+
+                    **Requires** `ticket.assign`.
+                    """)
+    @ApiResponse(responseCode = "204", description = "Assigned.")
+    public ResponseEntity<Void> assign(@PathVariable String ticketPublicId,
+                                       @RequestParam String agentPublicId) {
+        helpdeskService.assign(ticketPublicId, agentPublicId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/tickets/{ticketPublicId}/escalate")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).TICKET_ESCALATE)")
     @Operation(

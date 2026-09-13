@@ -9,6 +9,7 @@ import com.fnph.telepsychiatric.tenancy.TenantOwned;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.ParamDef;
+import com.fnph.telepsychiatric.storage.StorageArea;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -19,7 +20,7 @@ import java.time.LocalDateTime;
  * fileType and status previously shared one FileStatus enum that mixed file
  * purpose with scan state. They are now FileCategory and ScanStatus.
  *
- * filePath became storageBucket plus storageKey. A local filesystem path does
+ * filePath became storageArea plus storagePath. A raw filesystem path does
  * not survive a redeploy and cannot be read by a second application node,
  * which the production topology requires.
  */
@@ -31,8 +32,6 @@ import java.time.LocalDateTime;
 })
 @Getter
 @Setter
-@FilterDef(name = TenantFilters.CENTRE_TENANT,
-           parameters = @ParamDef(name = TenantFilters.CENTRE_ID_PARAM, type = Long.class))
 @Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
 public class FileUpload extends BaseEntity implements TenantOwned {
 
@@ -52,11 +51,12 @@ public class FileUpload extends BaseEntity implements TenantOwned {
     @Column(name = "original_file_name", nullable = false, length = 255)
     private String originalFileName;
 
-    @Column(name = "storage_bucket", nullable = false, length = 100)
-    private String storageBucket;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "storage_area", nullable = false, length = 40)
+    private StorageArea storageArea;
 
-    @Column(name = "storage_key", nullable = false, length = 500)
-    private String storageKey;
+    @Column(name = "storage_path", nullable = false, length = 500)
+    private String storagePath;
 
     @Column(name = "file_size", nullable = false)
     private Long fileSize;
@@ -98,6 +98,11 @@ public class FileUpload extends BaseEntity implements TenantOwned {
 
     @Column(name = "reference_id", length = 50)
     private String referenceId;
+
+    private boolean deleted;
+    private LocalDateTime deletedAt;
+    private String deletedBy;
+    private String deletedReason;
 
     /**
      * Tenant key for isolation enforcement. Null means this row belongs to the

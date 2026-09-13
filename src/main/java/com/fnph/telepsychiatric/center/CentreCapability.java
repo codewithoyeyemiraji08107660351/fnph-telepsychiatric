@@ -23,8 +23,6 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "centre_capabilities")
-@FilterDef(name = TenantFilters.CENTRE_TENANT,
-           parameters = @ParamDef(name = TenantFilters.CENTRE_ID_PARAM, type = Long.class))
 @Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
 @Getter
 @Setter

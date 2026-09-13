@@ -14,6 +14,7 @@ import com.fnph.telepsychiatric.payment.Payment;
 import com.fnph.telepsychiatric.payment.PatientCreditService;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
+import com.fnph.telepsychiatric.user.Users;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -76,6 +77,36 @@ public class BookingService {
     // Step 1: choose a time
     // -----------------------------------------------------------------
 
+    /**
+     * Available times for a date, one entry per period.
+     *
+     * Slots exist per room, so four rooms running at 09:00 are four rows. A
+     * patient choosing between four identical times is being asked a question
+     * they cannot answer, so they are collapsed here and the room is the Hub
+     * Coordinator's decision at approval.
+     */
+    @Transactional(readOnly = true)
+    public List<AvailableTime> availableTimes(ScheduleAudience audience, java.time.LocalDate date) {
+        int lead = configuration.getInt(ConfigurationKeys.ROOM_OPEN_LEAD_MINUTES);
+        List<Slot> slots = slotRepository.findAvailableOn(
+                audience, date, LocalDateTime.now().plusMinutes(lead));
+
+        java.util.Map<LocalDateTime, List<Slot>> byTime = slots.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        Slot::getStartAt, java.util.LinkedHashMap::new,
+                        java.util.stream.Collectors.toList()));
+
+        return byTime.entrySet().stream()
+                .map(e -> new AvailableTime(
+                        e.getKey(),
+                        e.getValue().get(0).getEndAt(),
+                        // One identifier per time. The rest are the same time in
+                        // another room and are held only if this one is taken.
+                        e.getValue().get(0).getPublicId(),
+                        e.getValue().size()))
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public List<Slot> bookableSlots(ScheduleAudience audience) {
         // Nothing inside the room-open lead time: a slot the patient could not
@@ -101,8 +132,22 @@ public class BookingService {
                 .orElseThrow(() -> new BookingException("That time is no longer listed"));
 
         if (!slot.isClaimable()) {
-            throw new BookingException(
-                    "Someone just took that time. Please choose another.");
+            // The patient chose a time, not a room. Another room may still be
+            // free at the same moment, and refusing here would tell them the
+            // time is gone when it is not.
+            Slot alternative = slotRepository
+                    .findAvailableOn(located.getPublication().getAudience(),
+                            located.getStartAt().toLocalDate(), LocalDateTime.now())
+                    .stream()
+                    .filter(s -> s.getStartAt().equals(located.getStartAt()))
+                    .findFirst()
+                    .orElseThrow(() -> new BookingException(
+                            "Someone just took that time. Please choose another."));
+
+            slot = slotRepository.findByIdForUpdate(alternative.getId())
+                    .filter(Slot::isClaimable)
+                    .orElseThrow(() -> new BookingException(
+                            "Someone just took that time. Please choose another."));
         }
         if (slot.getStartAt().isBefore(LocalDateTime.now())) {
             throw new BookingException("That time has passed");
@@ -269,6 +314,7 @@ public class BookingService {
                 assignment.notes());
 
         notifyAssignees(appointment);
+        notifyPatientApproved(appointment, room);
 
         notifications.notifyPatient(appointment.getPatient(),
                 NotificationType.APPOINTMENT_APPROVED,
@@ -292,6 +338,225 @@ public class BookingService {
                 appointment.getReference(), actor,
                 assignment.doctor().getUsername(), room.getCode());
         return appointment;
+    }
+
+    // -----------------------------------------------------------------
+    // Staged assignment
+    //
+    // The matrix distinguishes assigning a doctor from assigning a room, and
+    // Nursing holds the room one without the doctor one. That is a real
+    // workflow: a nurse moving a session because a room has a fault should not
+    // need the permission to choose who consults.
+    //
+    // So assignment is three separate acts, and the completeness check moves to
+    // approval rather than disappearing. An appointment cannot be approved
+    // without a doctor and a room, which is the guarantee the single composite
+    // call used to provide on its own.
+    // -----------------------------------------------------------------
+
+    /**
+     * Assigns the consulting clinician.
+     *
+     * Availability is checked here rather than only at approval, so a
+     * coordinator finds out immediately instead of after filling in the rest of
+     * the team.
+     */
+    @Transactional
+    public Appointment assignDoctor(String appointmentPublicId, Users doctor) {
+        Appointment appointment = requireAssignable(appointmentPublicId);
+
+        if (doctor == null) {
+            throw new BookingException("A doctor is required");
+        }
+        if (!availabilityRepository.isAvailable(doctor.getId(),
+                appointment.getAppointmentDate(), appointment.getScheduledEndAt())) {
+            throw new BookingException(
+                    "That doctor is not marked available for the whole of that slot");
+        }
+
+        appointment.setDoctor(doctor);
+        appointmentRepository.save(appointment);
+        recordTransition(appointment, appointment.getStatus(), appointment.getStatus(),
+                "Doctor assigned: " + doctor.getUsername());
+        return appointment;
+    }
+
+    /**
+     * Assigns or changes the room.
+     *
+     * Permitted after approval as well, because a room developing a fault an
+     * hour before a session is exactly when this is needed, and refusing it
+     * would leave the coordinator cancelling a confirmed appointment instead of
+     * moving it next door.
+     *
+     * An assignee already notified is told again when the room changes, because
+     * the room is the thing they were told to go to.
+     */
+    @Transactional
+    public Appointment assignRoom(String appointmentPublicId, Room room, String reason) {
+        Appointment appointment = appointmentRepository.findByPublicId(appointmentPublicId)
+                .orElseThrow(() -> new BookingException("No such appointment"));
+
+        if (appointment.getStatus() != Status.AWAITING_APPROVAL
+                && appointment.getStatus() != Status.APPROVED) {
+            throw new BookingException(
+                    "A room can only be set on a pending or confirmed appointment. This one is "
+                            + appointment.getStatus() + ".");
+        }
+        if (room == null || !Boolean.TRUE.equals(room.getIsActive())) {
+            throw new BookingException("An active room is required");
+        }
+        if (room.getRoomType() == RoomType.CENTRE_CONSULTATION) {
+            throw new BookingException("That room is reserved for centre consultations");
+        }
+
+        String previous = appointment.getRoom();
+        appointment.setAssignedRoom(room);
+        appointment.setRoom(room.getCode());
+        appointmentRepository.save(appointment);
+
+        recordTransition(appointment, appointment.getStatus(), appointment.getStatus(),
+                "Room %s -> %s%s".formatted(previous, room.getCode(),
+                        reason == null ? "" : ": " + reason));
+
+        // Only once the appointment is confirmed. Before that nobody has been
+        // told a room yet, so there is nothing to correct.
+        if (appointment.getStatus() == Status.APPROVED && previous != null
+                && !previous.equals(room.getCode())) {
+            notifyRoomChange(appointment, previous, reason);
+        }
+        return appointment;
+    }
+
+    /** Assigns the multidisciplinary team. Any of them may be null. */
+    @Transactional
+    public Appointment assignTeam(String appointmentPublicId, Users nurse, Users pharmacist,
+                                  Users laboratory, Users him) {
+        Appointment appointment = requireAssignable(appointmentPublicId);
+
+        appointment.setNurse(nurse);
+        appointment.setPharmacist(pharmacist);
+        appointment.setLaboratoryTechnician(laboratory);
+        appointment.setHimOfficer(him);
+        appointmentRepository.save(appointment);
+        recordTransition(appointment, appointment.getStatus(), appointment.getStatus(),
+                "Team assigned");
+        return appointment;
+    }
+
+    /**
+     * Approves an appointment whose team was assigned separately.
+     *
+     * The completeness check lives here. Without a doctor there is nobody to
+     * consult; without a room the patient is told to go nowhere. Either would
+     * produce an appointment that looks confirmed and cannot run.
+     */
+    @Transactional
+    public Appointment confirm(String appointmentPublicId, String notes) {
+        Appointment appointment = appointmentRepository.findByPublicId(appointmentPublicId)
+                .orElseThrow(() -> new BookingException("No such appointment"));
+
+        if (appointment.getStatus() != Status.AWAITING_APPROVAL) {
+            throw new BookingException(
+                    "Only a paid request awaiting approval can be confirmed. This one is "
+                            + appointment.getStatus() + ".");
+        }
+        if (appointment.getDoctor() == null) {
+            throw new BookingException(
+                    "Assign a consulting doctor first. Confirming without one produces an "
+                            + "appointment the patient thinks is booked and nobody can run.");
+        }
+        if (appointment.getAssignedRoom() == null) {
+            throw new BookingException(
+                    "Assign a room first. The patient is told the room, not the doctor's name.");
+        }
+        return finaliseApproval(appointment, notes);
+    }
+
+    private Appointment requireAssignable(String appointmentPublicId) {
+        Appointment appointment = appointmentRepository.findByPublicId(appointmentPublicId)
+                .orElseThrow(() -> new BookingException("No such appointment"));
+
+        if (appointment.getStatus() != Status.AWAITING_APPROVAL) {
+            throw new BookingException(
+                    "Assignment only applies to a paid request awaiting approval. This one is "
+                            + appointment.getStatus() + ".");
+        }
+        return appointment;
+    }
+
+    /**
+     * The approval tail shared by the composite call and the staged one.
+     *
+     * Extracted so the two cannot drift. Two copies of "debit the wallet, set
+     * the join window, notify everyone" would eventually disagree about one of
+     * them, and the one that gets missed would be the wallet.
+     */
+    private Appointment finaliseApproval(Appointment appointment, String notes) {
+        LocalDateTime now = LocalDateTime.now();
+        Room room = appointment.getAssignedRoom();
+
+        appointment.setStatus(Status.APPROVED);
+        appointment.setApprovedBy(CurrentUser.usernameOrSystem());
+        appointment.setApprovedAt(now);
+        appointment.setJoinWindowOpensAt(appointment.getAppointmentDate()
+                .minusMinutes(configuration.getInt(ConfigurationKeys.ROOM_OPEN_LEAD_MINUTES)));
+
+        BigDecimal fee = configuration.getDecimal(ConfigurationKeys.CONSULTATION_FEE_NGN);
+        walletService.apply(appointment.getPatient(), fee,
+                appointment.getPayment() == null ? null : appointment.getPayment().getId());
+        appointment.setWalletDebitedAt(now);
+        appointmentRepository.save(appointment);
+
+        recordTransition(appointment, Status.AWAITING_APPROVAL, Status.APPROVED, notes);
+        notifyAssignees(appointment);
+        notifyPatientApproved(appointment, room);
+
+        auditService.record(AuditService.AuditEvent.builder()
+                .action(AuditAction.RECORD_UPDATED)
+                .entityType("Appointment")
+                .entityId(appointment.getId())
+                .details("Confirmed after staged assignment: doctor %s, room %s"
+                        .formatted(appointment.getDoctor().getUsername(), room.getCode()))
+                .reason(notes)
+                .build());
+
+        log.info("Appointment {} confirmed: doctor {}, room {}",
+                appointment.getReference(), appointment.getDoctor().getUsername(),
+                room.getCode());
+        return appointment;
+    }
+
+    private void notifyPatientApproved(Appointment appointment, Room room) {
+        notifications.notifyPatient(appointment.getPatient(),
+                NotificationType.APPOINTMENT_APPROVED,
+                "Your appointment is confirmed",
+                "Your consultation is confirmed for %s in %s. You will be able to join "
+                        .formatted(appointment.getAppointmentDate(), room.getName())
+                        + "shortly before the start time.",
+                "/portal/appointments/" + appointment.getPublicId(),
+                "Appointment", appointment.getId());
+    }
+
+    private void notifyRoomChange(Appointment appointment, String previousRoom, String reason) {
+        String message = "The room has changed from %s to %s.%s".formatted(
+                previousRoom, appointment.getRoom(), reason == null ? "" : " " + reason);
+
+        java.util.stream.Stream.of(appointment.getDoctor(), appointment.getNurse(),
+                        appointment.getPharmacist(), appointment.getLaboratoryTechnician(),
+                        appointment.getHimOfficer())
+                .filter(java.util.Objects::nonNull)
+                .forEach(assignee -> notifications.notifyUser(assignee,
+                        NotificationType.APPOINTMENT_APPROVED,
+                        "Room changed", message,
+                        "/clinical/appointments/" + appointment.getPublicId(),
+                        "Appointment", appointment.getId()));
+
+        notifications.notifyPatient(appointment.getPatient(),
+                NotificationType.APPOINTMENT_APPROVED,
+                "Your consultation room has changed", message,
+                "/portal/appointments/" + appointment.getPublicId(),
+                "Appointment", appointment.getId());
     }
 
     /**
@@ -446,6 +711,11 @@ public class BookingService {
     }
 
     /** The team and room a Hub Coordinator assigns at approval. */
+    /** One bookable period, with how many rooms are still free at it. */
+    public record AvailableTime(LocalDateTime startAt, LocalDateTime endAt,
+                                String slotPublicId, int remaining) {
+    }
+
     public record AssignmentRequest(
             com.fnph.telepsychiatric.user.Users doctor,
             com.fnph.telepsychiatric.user.Users nurse,

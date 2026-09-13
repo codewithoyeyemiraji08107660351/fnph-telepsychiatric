@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.email;
 
+import com.fnph.telepsychiatric.user.Users;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -183,12 +184,18 @@ public class AccountEmailService {
         }
     }
 
-    /** Logs must not become a directory of who holds an account here. */
+    /**
+     * Logs must not become a directory of who holds an account here.
+     */
     private String maskAddress(String address) {
+        if (address == null || address.isBlank()) {
+            return "(none)";
+        }
         int at = address.indexOf('@');
         if (at <= 1) {
             return "***";
         }
         return address.charAt(0) + "***" + address.substring(at);
     }
+
 }

@@ -21,19 +21,24 @@ import java.time.LocalDateTime;
 @Setter
 public class Appointment extends BaseEntity {
 
+    @Column(name = "status", nullable = false)
+    @Enumerated(EnumType.STRING)
+    /**
+     * The FNPH journey begins with a held slot: choose the time, then pay.
+     * Never PENDING_APPROVAL, which was the pre-payment-first status and is a
+     * duplicate of AWAITING_APPROVAL.
+     */
+    private Status status = Status.SLOT_HELD;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "patient_id", nullable = false)
     private Patient patient;
 
     @Column(name = "appointment_date", nullable = false)
-    private LocalDateTime appointmentDateTime;
+    private LocalDateTime appointmentDate;
 
     @Column(name = "duration_minutes", nullable = false)
     private Integer durationMinutes = 30;
-
-    @Column(name = "status", nullable = false)
-    @Enumerated(EnumType.STRING)
-    private Status status = Status.PENDING_APPROVAL;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "doctor_id")
@@ -150,6 +155,7 @@ public class Appointment extends BaseEntity {
 
     @Column(name = "no_show_at")
     private LocalDateTime noShowAt;
+
 
     /** Guards two patients claiming the same time concurrently. */
     @Version

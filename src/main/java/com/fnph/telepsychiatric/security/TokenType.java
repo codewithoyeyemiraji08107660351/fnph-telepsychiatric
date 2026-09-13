@@ -13,5 +13,6 @@ public enum TokenType {
      * on the MFA endpoints and carries no authority claims, so holding one
      * without completing the challenge grants nothing.
      */
-    CHALLENGE
+    CHALLENGE,
+    PASSWORD_RESET
 }

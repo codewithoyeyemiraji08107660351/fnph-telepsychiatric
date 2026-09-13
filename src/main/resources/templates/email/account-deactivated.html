@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: html(body=~{::body-content})}">
+<body>
+<div th:fragment="body-content">
+
+    <p style="margin:0 0 16px;">Hello <span th:text="${recipientName}">Aisha Bello</span>,</p>
+
+    <p style="margin:0 0 20px;">
+        Your FNPH Telepsychiatry account has been deactivated and you have been signed
+        out everywhere.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="background:#f8f9fa;border-radius:6px;margin:0 0 20px;">
+        <tr>
+            <td style="padding:14px 16px;font-size:14px;color:#495057;">
+                <strong>Reason given</strong><br>
+                <span th:text="${reason}">Left the department</span>
+            </td>
+        </tr>
+    </table>
+
+    <p style="margin:0;">
+        Your clinical, financial and audit history is retained in full, as required.
+        Deactivation removes access; it does not erase records.
+        Contact your administrator if you think this is a mistake.
+    </p>
+
+</div>
+</body>
+</html>

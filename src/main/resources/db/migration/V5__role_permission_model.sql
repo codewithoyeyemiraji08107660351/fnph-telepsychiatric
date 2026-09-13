@@ -105,7 +105,7 @@ CREATE TABLE user_role (
     PRIMARY KEY (user_id, role_id),
     UNIQUE KEY uk_user_role_single_primary (primary_marker),
     KEY idx_user_role_role (role_id),
-    CONSTRAINT fk_user_role_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    CONSTRAINT fk_user_role_user FOREIGN KEY (user_id) REFERENCES users (id),
     CONSTRAINT fk_user_role_role FOREIGN KEY (role_id) REFERENCES roles (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

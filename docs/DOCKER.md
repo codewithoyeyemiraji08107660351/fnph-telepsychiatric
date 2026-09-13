@@ -173,7 +173,7 @@ Copy-Item .env.example .env
 ```
 
 ```bash
-cp .env.example .env          # macOS, Linux
+cp .env .env          # macOS, Linux
 ```
 
 Now fill in the values that have none. Three matter for local development.

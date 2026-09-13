@@ -7,6 +7,7 @@ import com.fnph.telepsychiatric.patient.CentrePatient;
 import com.fnph.telepsychiatric.patient.Patient;
 import com.fnph.telepsychiatric.tenancy.TenantFilters;
 import com.fnph.telepsychiatric.tenancy.TenantOwned;
+import com.fnph.telepsychiatric.storage.StorageArea;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -26,8 +27,6 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "issued_documents")
-@FilterDef(name = TenantFilters.CENTRE_TENANT,
-           parameters = @ParamDef(name = TenantFilters.CENTRE_ID_PARAM, type = Long.class))
 @Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
 @Getter
 @Setter
@@ -91,11 +90,18 @@ public class IssuedDocument extends BaseEntity implements TenantOwned {
     @Column(name = "is_view_only", nullable = false)
     private Boolean isViewOnly = false;
 
-    @Column(name = "storage_bucket", length = 100)
-    private String storageBucket;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "storage_area", length = 40)
+    private StorageArea storageArea;
 
-    @Column(name = "storage_key", length = 500)
-    private String storageKey;
+    @Column(name = "storage_path", length = 500)
+    private String storagePath;
+
+    @Column(name = "file_size_bytes")
+    private Long fileSizeBytes;
+
+    @Column(name = "content_type", length = 100)
+    private String contentType;
 
     @Column(name = "file_checksum", length = 64)
     private String fileChecksum;

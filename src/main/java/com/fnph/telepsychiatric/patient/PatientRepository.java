@@ -17,5 +17,16 @@ public interface PatientRepository extends JpaRepository<Patient, Long> {
     /** Accounts whose details changed in a later snapshot. HIM's review queue. */
     Page<Patient> findAllByDriftFlaggedTrueOrderByDriftFlaggedAtDesc(Pageable pageable);
 
+    @org.springframework.data.jpa.repository.Query("""
+           select p from Patient p
+           where p.deleted = false
+             and (p.ehrNumber = :term
+               or lower(p.firstName) like lower(concat('%', :term, '%'))
+               or lower(p.lastName)  like lower(concat('%', :term, '%')))
+           """)
+    java.util.List<Patient> search(
+            @org.springframework.data.repository.query.Param("term") String term,
+            Pageable pageable);
+
     long countByDriftFlaggedTrue();
 }

@@ -72,3 +72,33 @@ cat <<'REMINDER'
 A backup on the same host as the database is not a backup. Copy this file
 off-box, encrypted, before you consider the job done.
 REMINDER
+
+# ---------------------------------------------------------------------------
+# Files, not just the database.
+#
+# FNPH chose filesystem storage, so the dump above is no longer a backup on its
+# own. A restore that brings back the database without the files leaves every
+# document row pointing at nothing, and the system looks healthy while every
+# download 404s. The two are taken together and must be restored together.
+# ---------------------------------------------------------------------------
+STORAGE_ROOT="${STORAGE_ROOT:-/var/lib/fnph/storage}"
+
+if [ -d "$STORAGE_ROOT" ]; then
+  FILES_ARCHIVE="${BACKUP_DIR}/files-${TIMESTAMP}.tar.gz"
+  echo "Archiving ${STORAGE_ROOT} ..."
+  tar -czf "$FILES_ARCHIVE" -C "$(dirname "$STORAGE_ROOT")" "$(basename "$STORAGE_ROOT")"
+  sha256sum "$FILES_ARCHIVE" > "${FILES_ARCHIVE}.sha256"
+
+  FILE_COUNT=$(find "$STORAGE_ROOT" -type f | wc -l)
+  ARCHIVE_SIZE=$(du -h "$FILES_ARCHIVE" | cut -f1)
+  echo "Archived ${FILE_COUNT} file(s), ${ARCHIVE_SIZE}"
+
+  # The pairing matters. A database dump restored against a file archive from a
+  # different night gives documents that exist in one and not the other.
+  echo "${DUMP_FILE##*/}" > "${FILES_ARCHIVE}.paired-with"
+  echo "${FILES_ARCHIVE##*/}" > "${DUMP_FILE}.paired-with"
+else
+  echo "WARNING: ${STORAGE_ROOT} does not exist. No files were backed up."
+  echo "If this is a production host, the backup is incomplete."
+fi
+

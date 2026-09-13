@@ -4,6 +4,7 @@ import com.fnph.telepsychiatric.appointment.Appointment;
 import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.notification.InAppNotificationService;
+import com.fnph.telepsychiatric.document.DocumentType;
 import com.fnph.telepsychiatric.notification.NotificationType;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
@@ -39,6 +40,12 @@ import java.util.List;
 public class ReleaseService {
 
     private final ReleaseBundleRepository bundleRepository;
+    private final PrescriptionRepository prescriptionRepository;
+    private final InvestigationRepository investigationRepository;
+    private final FollowUpRepository followUpRepository;
+    private final com.fnph.telepsychiatric.document.IssuedDocumentService documentService;
+    private final com.fnph.telepsychiatric.document.render.DocumentRenderer renderer;
+    private final com.fnph.telepsychiatric.centre.CentreReferralService centreDelivery;
     private final ReleaseBundleComponentRepository componentRepository;
     private final InAppNotificationService notifications;
     private final AuditService auditService;
@@ -183,12 +190,25 @@ public class ReleaseService {
         bundle.setReleaseNotes(notes);
         bundleRepository.save(bundle);
 
+        // The join that makes release mean something. Without it the bundle is
+        // marked released, the patient is told their documents are ready, and
+        // there is nothing for them to open.
+        int issued = issueDocumentsFor(bundle);
+
         if (bundle.getAppointment() != null) {
             notifications.notifyPatient(bundle.getAppointment().getPatient(),
                     NotificationType.PRESCRIPTION_RELEASED,
                     "Your consultation documents are ready",
-                    "Your documents from the consultation are now available in your account.",
+                    "%d document(s) from your consultation are now available in your account."
+                            .formatted(issued),
                     "/portal/documents", "ReleaseBundle", bundle.getId());
+        }
+
+        // A centre bundle also lands in that centre's incoming queue. Without
+        // this the centre pathway ends at the consultation and the centre never
+        // receives anything.
+        if (bundle.getCentreAppointment() != null) {
+            centreDelivery.deliver(bundle, bundle.getCentreAppointment());
         }
 
         auditService.record(AuditService.AuditEvent.builder()
@@ -218,6 +238,76 @@ public class ReleaseService {
         bundle.setBlockedReason(reason);
         bundleRepository.save(bundle);
         return bundle;
+    }
+
+    /**
+     * Issues and renders one document per released component.
+     *
+     * A failure to render one document must not stop the others being issued.
+     * A patient who receives their prescription and not their follow-up note is
+     * in a much better position than one who receives nothing because a
+     * template had a typo in it.
+     */
+    private int issueDocumentsFor(ReleaseBundle bundle) {
+        int issued = 0;
+        var patient = bundle.getAppointment() == null ? null : bundle.getAppointment().getPatient();
+
+        for (Prescription prescription : prescriptionRepository.findAllByBundleId(bundle.getId())) {
+            try {
+                var document = documentService.issue(
+                        DocumentType.PRESCRIPTION, prescription.getId(), patient);
+                byte[] pdf = renderer.renderPrescription(prescription,
+                        document.getIssueNumber(),
+                        documentService.verificationUrlFor(document.getId()),
+                        document.getExpiresAt().toLocalDate());
+                documentService.attachRendered(document.getId(), pdf, "application/pdf");
+                prescription.setIssueNumber(document.getIssueNumber());
+                prescription.setExpiryDate(document.getExpiresAt().toLocalDate());
+                prescription.setStatus(ClinicalDocumentStatus.RELEASED);
+                prescriptionRepository.save(prescription);
+                issued++;
+            } catch (Exception e) {
+                log.error("Could not issue prescription {} in bundle {}: {}",
+                        prescription.getPublicId(), bundle.getPublicId(), e.getMessage(), e);
+            }
+        }
+
+        for (Investigation investigation : investigationRepository.findAllByBundleId(bundle.getId())) {
+            try {
+                var document = documentService.issue(
+                        DocumentType.INVESTIGATION_REQUEST, investigation.getId(), patient);
+                byte[] pdf = renderer.renderInvestigation(investigation,
+                        document.getIssueNumber(),
+                        documentService.verificationUrlFor(document.getId()),
+                        document.getExpiresAt().toLocalDate());
+                documentService.attachRendered(document.getId(), pdf, "application/pdf");
+                investigation.setIssueNumber(document.getIssueNumber());
+                investigation.setExpiryDate(document.getExpiresAt().toLocalDate());
+                investigation.setStatus(ClinicalDocumentStatus.RELEASED);
+                investigationRepository.save(investigation);
+                issued++;
+            } catch (Exception e) {
+                log.error("Could not issue investigation {} in bundle {}: {}",
+                        investigation.getPublicId(), bundle.getPublicId(), e.getMessage(), e);
+            }
+        }
+
+        for (FollowUp followUp : followUpRepository.findAllByBundleId(bundle.getId())) {
+            try {
+                var document = documentService.issue(
+                        DocumentType.FOLLOW_UP_RECOMMENDATION, followUp.getId(), patient);
+                byte[] pdf = renderer.renderFollowUp(followUp, document.getIssueNumber(),
+                        documentService.verificationUrlFor(document.getId()));
+                documentService.attachRendered(document.getId(), pdf, "application/pdf");
+                issued++;
+            } catch (Exception e) {
+                log.error("Could not issue follow-up {} in bundle {}: {}",
+                        followUp.getPublicId(), bundle.getPublicId(), e.getMessage(), e);
+            }
+        }
+
+        log.info("Bundle {} released with {} document(s)", bundle.getPublicId(), issued);
+        return issued;
     }
 
     @Transactional(readOnly = true)

@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -26,6 +27,7 @@ public class NotificationController {
     private final InAppNotificationService notificationService;
 
     @GetMapping
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).NOTIFICATION_READ_OWN)")
     @Operation(
             summary = "My dashboard notifications",
             description = """
@@ -48,7 +50,7 @@ public class NotificationController {
 
                     Follow `actionUrl` on click.
 
-                    **Requires** any authenticated session.
+                    **Requires** `notification.read_own`.
                     """)
     @ApiResponse(responseCode = "200", description = "Notifications returned, newest first.",
             content = @Content(schema = @Schema(implementation = NotificationResponse.class)))
@@ -63,6 +65,7 @@ public class NotificationController {
     }
 
     @GetMapping("/unread-count")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).NOTIFICATION_READ_OWN)")
     @Operation(
             summary = "How many items are waiting",
             description = """
@@ -72,7 +75,7 @@ public class NotificationController {
                     is the number a coordinator actually needs, rather than how many
                     messages one person has not opened.
 
-                    **Requires** any authenticated session.
+                    **Requires** `notification.read_own`.
                     """)
     @ApiResponse(responseCode = "200", description = "Count returned.")
     public ResponseEntity<Map<String, Long>> unreadCount() {
@@ -89,7 +92,7 @@ public class NotificationController {
                     picked it up, which is how a team knows a request is being handled
                     rather than two people opening it at once.
 
-                    **Requires** any authenticated session.
+                    **Requires** `notification.read_own`.
                     """)
     @ApiResponse(responseCode = "204", description = "Marked read.")
     public ResponseEntity<Void> markRead(@PathVariable String notificationPublicId) {
@@ -106,7 +109,7 @@ public class NotificationController {
                     Use with care on a shared dashboard: it also clears items addressed to
                     the role, which removes them from every colleague's list as well.
 
-                    **Requires** any authenticated session.
+                    **Requires** `notification.read_own`.
                     """)
     @ApiResponse(responseCode = "200", description = "Returns how many were marked.")
     public ResponseEntity<Map<String, Integer>> markAllRead() {

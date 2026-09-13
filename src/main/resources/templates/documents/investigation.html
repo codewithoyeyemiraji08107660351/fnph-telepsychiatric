@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <title th:text="'Investigation request ' + ${issueNumber}">Investigation request</title>
+    <style>
+        @page { size: A4; margin: 18mm 16mm; }
+        body { font-family: sans-serif; font-size: 11pt; color: #000; line-height: 1.45; }
+        .header { border-bottom: 2pt solid #000; padding-bottom: 6pt; margin-bottom: 12pt; }
+        .hospital { font-size: 15pt; font-weight: bold; }
+        .unit { font-size: 10pt; }
+        .doc-title { font-size: 13pt; font-weight: bold; margin: 10pt 0 4pt; letter-spacing: 1pt; }
+        .issue-number { font-size: 13pt; font-weight: bold; letter-spacing: 0.5pt; }
+        .meta { width: 100%; margin-bottom: 10pt; }
+        .meta td { padding: 2pt 0; vertical-align: top; font-size: 10pt; }
+        .meta .label { width: 34mm; color: #333; }
+        table.items { width: 100%; border-collapse: collapse; margin-top: 8pt; }
+        table.items th, table.items td {
+            border: 1pt solid #000; padding: 5pt 6pt; text-align: left; font-size: 10pt;
+        }
+        .footer { margin-top: 16pt; border-top: 1pt solid #000; padding-top: 8pt; font-size: 9pt; }
+        .qr { float: right; text-align: center; width: 32mm; }
+        .qr img { width: 30mm; height: 30mm; }
+        .qr span { font-size: 7pt; display: block; margin-top: 2pt; }
+        .expiry { font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="hospital">Federal Neuropsychiatric Hospital, Kaduna</div>
+    <div class="unit">Telepsychiatry Service</div>
+</div>
+
+<div class="qr">
+    <img th:src="${qrDataUri}" alt="Verification code"/>
+    <span>Scan to verify</span>
+</div>
+
+<div class="doc-title">INVESTIGATION REQUEST</div>
+<div class="issue-number" th:text="${issueNumber}">IV-0000-00000000</div>
+
+<table class="meta">
+    <tr><td class="label">Patient</td><td th:text="${patientName}"></td></tr>
+    <tr><td class="label">Record number</td><td th:text="${patientIdentifier}"></td></tr>
+    <tr><td class="label">Issued</td><td th:text="${issuedOn}"></td></tr>
+    <tr th:if="${expiresOn}">
+        <td class="label">Valid until</td>
+        <td class="expiry" th:text="${expiresOn}"></td>
+    </tr>
+</table>
+
+<div th:if="${clinicalInformation}">
+    <strong>Clinical information</strong>
+    <div th:text="${clinicalInformation}"></div>
+</div>
+
+<table class="items">
+    <thead>
+    <tr>
+        <th style="width:40%">Investigation</th>
+        <th style="width:15%">Code</th>
+        <th style="width:45%">Notes</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr th:each="item : ${items}">
+        <td th:text="${item.panelName}"></td>
+        <td th:text="${item.panelCode}"></td>
+        <td th:text="${item.notes}"></td>
+    </tr>
+    </tbody>
+</table>
+
+<div class="footer">
+    Verify this document at <span th:text="${verificationUrl}"></span><br/>
+    A copy presented after the validity date will verify as expired.
+</div>
+
+</body>
+</html>

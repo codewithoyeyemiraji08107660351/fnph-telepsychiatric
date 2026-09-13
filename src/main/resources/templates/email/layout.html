@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${serviceName}">FNPH Kaduna Telepsychiatry</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:24px 12px;">
+    <tr>
+        <td align="center">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                   style="max-width:560px;background:#ffffff;border-radius:8px;border:1px solid #e3e5e8;">
+
+                <tr>
+                    <td style="padding:24px 32px;border-bottom:1px solid #e3e5e8;">
+                        <div style="font-size:15px;font-weight:600;color:#0f5132;" th:text="${serviceName}">
+                            FNPH Kaduna Telepsychiatry
+                        </div>
+                        <div style="font-size:12px;color:#6c757d;margin-top:2px;">
+                            Federal Neuropsychiatric Hospital, Kaduna
+                        </div>
+                    </td>
+                </tr>
+
+                <tr>
+                    <td style="padding:32px;font-size:15px;line-height:1.6;color:#212529;">
+                        <div th:replace="${body}">Message content</div>
+                    </td>
+                </tr>
+
+                <!--
+                  The emergency line is on every account email deliberately. This
+                  service excludes emergencies, and someone reaching for it in a
+                  crisis needs the correct number in front of them rather than a
+                  sign-in page.
+                -->
+                <tr>
+                    <td style="padding:16px 32px;background:#fff4e5;border-top:1px solid #ffe0b2;
+                               font-size:13px;line-height:1.5;color:#7a4f01;">
+                        <strong>This service is not for emergencies.</strong>
+                        If you or someone else is at immediate risk, go to the nearest
+                        emergency department or call
+                        <span th:text="${emergencyNumber}">08032722243</span>.
+                    </td>
+                </tr>
+
+                <tr>
+                    <td style="padding:20px 32px;border-top:1px solid #e3e5e8;font-size:12px;
+                               line-height:1.5;color:#6c757d;">
+                        This is an automated message from an account system. Nobody monitors
+                        replies to this address.
+                        <br><br>
+                        If you were not expecting it, you can ignore it. Nothing changes on
+                        your account unless you follow a link in it.
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>

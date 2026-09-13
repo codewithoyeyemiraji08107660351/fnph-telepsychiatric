@@ -33,8 +33,18 @@ public class ContactVerification extends BaseEntity {
     private ContactChannel channel;
 
     /** Shown to the caller so they know where to look. Never the full value. */
+    /** EMAIL, or ASSISTED when a member of staff reads it to the patient. */
+    @Column(name = "delivery_route", nullable = false, length = 20)
+    private String deliveryRoute = "EMAIL";
+
     @Column(name = "destination_masked", nullable = false, length = 50)
     private String destinationMasked;
+
+    @Column(name = "released_to_staff_at")
+    private LocalDateTime releasedToStaffAt;
+
+    @Column(name = "released_by", length = 100)
+    private String releasedBy;
 
     @Column(name = "code_hash", nullable = false, length = 64)
     private String codeHash;

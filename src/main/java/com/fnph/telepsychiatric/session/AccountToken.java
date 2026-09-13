@@ -1,6 +1,7 @@
 package com.fnph.telepsychiatric.session;
 
 import com.fnph.telepsychiatric.common.BaseEntity;
+import com.fnph.telepsychiatric.security.TokenType;
 import com.fnph.telepsychiatric.user.Users;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -54,4 +55,5 @@ public class AccountToken extends BaseEntity {
     public boolean isUsable(LocalDateTime now) {
         return usedAt == null && invalidatedAt == null && expiresAt.isAfter(now);
     }
+
 }

@@ -52,7 +52,6 @@ public enum Status {
     IN_PROGRESS,
     COMPLETED,
 
-    PENDING_APPROVAL,
     /** No join by the configured cutoff. The link deactivated. */
     NO_SHOW
 }

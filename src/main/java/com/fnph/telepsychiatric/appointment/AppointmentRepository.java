@@ -19,7 +19,8 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
     List<Appointment> findAllByPatientIdOrderByAppointmentDateDesc(Long patientId);
 
     /** The Hub Coordinator's queue: paid, waiting on a decision. */
-    Page<Appointment> findAllByStatusOrderByAppointmentDateAsc(Status status, Pageable pageable);
+    Page<Appointment> findAllByStatusOrderByAppointmentDateAsc(Status status,
+                                                               Pageable pageable);
 
     long countByStatus(Status status);
 

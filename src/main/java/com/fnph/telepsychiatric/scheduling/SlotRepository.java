@@ -41,6 +41,26 @@ public interface SlotRepository extends JpaRepository<Slot, Long> {
 
     List<Slot> findAllByPublicationIdOrderByStartAtAsc(Long publicationId);
 
+    /**
+     * Available slots for a date, in time order.
+     *
+     * The caller groups them by start time. A patient chooses a time; which of
+     * the rooms running at that time they get is the Hub Coordinator's decision
+     * at approval, so showing four identical times would be noise.
+     */
+    @Query("""
+           select s from Slot s
+           where s.publication.audience = :audience
+             and s.publication.serviceDate = :date
+             and s.publication.status = com.fnph.telepsychiatric.scheduling.PublicationStatus.PUBLISHED
+             and s.state = com.fnph.telepsychiatric.scheduling.SlotState.AVAILABLE
+             and s.startAt > :notBefore
+           order by s.startAt asc
+           """)
+    List<Slot> findAvailableOn(@Param("audience") ScheduleAudience audience,
+                               @Param("date") java.time.LocalDate date,
+                               @Param("notBefore") LocalDateTime notBefore);
+
     long countByPublicationIdAndState(Long publicationId, SlotState state);
 
     /** Returns lapsed holds to the pool. Run on a schedule. */

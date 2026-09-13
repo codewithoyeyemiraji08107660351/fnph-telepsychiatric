@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: html(body=~{::body-content})}">
+<body>
+<div th:fragment="body-content">
+
+    <p style="margin:0 0 16px;">Hello <span th:text="${recipientName}">Aisha Bello</span>,</p>
+
+    <p style="margin:0 0 16px;">
+        An account has been created for you on the FNPH Kaduna Telepsychiatry
+        platform by <span th:text="${invitedByName}">the administrator</span>.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="background:#f8f9fa;border-radius:6px;margin:0 0 20px;">
+        <tr>
+            <td style="padding:14px 16px;font-size:14px;color:#495057;">
+                <strong>Role</strong><br>
+                <span th:text="${roleName}">Doctor</span>
+                <span th:if="${centreName}">
+                    <br><br><strong>Centre</strong><br>
+                    <span th:text="${centreName}">Zaria Centre of Excellence</span>
+                </span>
+            </td>
+        </tr>
+    </table>
+
+    <!--
+      No password is sent. The recipient sets their own through this link, so
+      the credential never exists in an inbox or a mail server backup.
+    -->
+    <p style="margin:0 0 20px;">
+        Choose your password to finish setting up. You will also be asked to set up
+        a second factor using an authenticator app on your phone, which is required
+        for every staff and centre account.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px;">
+        <tr>
+            <td style="border-radius:6px;background:#0f5132;">
+                <a th:href="${activationUrl}"
+                   style="display:inline-block;padding:12px 28px;font-size:15px;font-weight:600;
+                          color:#ffffff;text-decoration:none;">
+                    Set up my account
+                </a>
+            </td>
+        </tr>
+    </table>
+
+    <p style="margin:0 0 16px;font-size:14px;color:#6c757d;">
+        This link works once and expires on
+        <strong th:text="${expiresAt}">10 September 2026 at 09:00</strong>.
+        If it has expired, ask your administrator to send a new one.
+    </p>
+
+    <p style="margin:0;font-size:13px;color:#6c757d;">
+        If the button does not work, copy this address into your browser:<br>
+        <span th:text="${activationUrl}" style="word-break:break-all;color:#0f5132;">https://…</span>
+    </p>
+
+</div>
+</body>
+</html>

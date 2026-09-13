@@ -17,7 +17,7 @@ spring:
   jpa:
     # Flyway owns the schema. Hibernate only checks that the entities match it.
     hibernate:
-      ddl-auto: validate
+      ddl-auto: none
     open-in-view: false
     show-sql: false
     properties:
@@ -111,6 +111,7 @@ application:
       refresh-token-days: ${JWT_REFRESH_DAYS:7}
       inactivity-timeout-minutes: ${JWT_INACTIVITY_MINUTES:30}
 
+
     encryption:
       # AES-256 key for values that must be readable again, which today means
       # TOTP shared secrets. Must decode to exactly 32 bytes.
@@ -142,7 +143,10 @@ application:
       max-mfa-attempts: 5
       mfa-lockout-minutes: 15
       mfa-challenge-minutes: 5
+      mfa-required: ${MFA_REQUIRED:false}
       recovery-code-count: 10
+
+
 
       # Length, not composition. See PasswordPolicy for why.
       min-password-length: 12
@@ -180,6 +184,36 @@ application:
       connect-timeout-seconds: 10
       read-timeout-seconds: 30
 
+  storage:
+    # Filesystem, not object storage. FNPH's choice, and reasonable for one
+    # hospital with predictable volume in a setting where connectivity is the
+    # least reliable part of the stack.
+    #
+    # Two consequences that must be handled at deployment:
+    #   1. The database backup alone is no longer a backup. Files and database
+    #      have to be backed up together and restored together, or a restore
+    #      leaves every document row pointing at nothing.
+    #   2. Two application nodes need this on a shared mount visible at the
+    #      same path on both. Otherwise a download routed to the wrong node
+    #      fails intermittently, which is the hardest fault to diagnose.
+    #
+    # Must be outside the application directory and outside anything the web
+    # server serves.
+    root: ${STORAGE_ROOT:/var/lib/fnph/storage}
+    max-file-size-mb: 20
+    # An allow-list. A block-list is a list of the file types somebody thought of.
+    allowed-content-types:
+      - application/pdf
+      - image/jpeg
+      - image/png
+      - image/heic
+      - text/csv
+      - text/plain
+    # Costs a hash per read. Worth it: a corrupted prescription served as
+    # though intact is worse than a failed download.
+    verify-checksum-on-read: true
+    free-space-warning-percent: 20
+
   video:
     provider: ${VIDEO_PROVIDER:daily}
     daily:
@@ -198,16 +232,6 @@ application:
       # running over. The room expiring at the provider is the second
       # enforcement of a fixed slot end.
       room-grace-minutes: 5
-
-  storage:
-    endpoint: ${S3_ENDPOINT}
-    region: ${S3_REGION:eu-west-1}
-    bucket: ${S3_BUCKET}
-    access-key: ${S3_ACCESS_KEY}
-    secret-key: ${S3_SECRET_KEY}
-    max-file-size: 20971520
-    allowed-image-types: image/jpeg,image/png,image/webp
-    allowed-document-types: application/pdf
 
   notification:
     email:

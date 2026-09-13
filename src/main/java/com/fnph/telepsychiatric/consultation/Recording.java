@@ -1,6 +1,7 @@
 package com.fnph.telepsychiatric.consultation;
 
 import com.fnph.telepsychiatric.common.BaseEntity;
+import com.fnph.telepsychiatric.storage.StorageArea;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -37,11 +38,12 @@ public class Recording extends BaseEntity {
     @Column(name = "provider_recording_id", length = 150)
     private String providerRecordingId;
 
-    @Column(name = "storage_bucket", length = 100)
-    private String storageBucket;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "storage_area", length = 40)
+    private StorageArea storageArea;
 
-    @Column(name = "storage_key", length = 500)
-    private String storageKey;
+    @Column(name = "storage_path", length = 500)
+    private String storagePath;
 
     /** Which consent version every participant accepted. */
     @Column(name = "consent_acceptance_id")

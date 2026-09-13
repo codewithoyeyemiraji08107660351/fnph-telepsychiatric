@@ -78,7 +78,7 @@ public class TotpService {
         return false;
     }
 
-    String generateCode(String base32Secret, long counter, int digits) {
+    public String generateCode(String base32Secret, long counter, int digits) {
         try {
             byte[] key = decodeBase32(base32Secret);
             byte[] counterBytes = new byte[8];

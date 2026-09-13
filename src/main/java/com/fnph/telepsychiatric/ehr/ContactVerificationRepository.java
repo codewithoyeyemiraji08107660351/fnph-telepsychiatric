@@ -12,6 +12,20 @@ public interface ContactVerificationRepository extends JpaRepository<ContactVeri
 
     Optional<ContactVerification> findByPublicId(String publicId);
 
+    /**
+     * Codes waiting for a member of staff to read out.
+     *
+     * Assisted enrolment, for a patient with no email on the hospital record.
+     * Unverified, not yet released, and still inside its window.
+     */
+    @Query("""
+           select c from ContactVerification c
+           where c.deliveryRoute = 'ASSISTED' and c.verifiedAt is null
+             and c.invalidatedAt is null and c.expiresAt > :now
+           order by c.createdAt asc
+           """)
+    java.util.List<ContactVerification> findPendingAssisted(@Param("now") LocalDateTime now);
+
     /** Issuing a new code kills the outstanding one, so an old SMS stops working. */
     @Modifying
     @Query("""

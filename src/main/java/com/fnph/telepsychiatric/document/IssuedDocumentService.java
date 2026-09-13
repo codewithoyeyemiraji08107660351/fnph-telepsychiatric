@@ -7,6 +7,8 @@ import com.fnph.telepsychiatric.configuration.ConfigurationService;
 import com.fnph.telepsychiatric.patient.Patient;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
+import com.fnph.telepsychiatric.storage.StorageArea;
+import com.fnph.telepsychiatric.storage.StoredObject;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -50,6 +52,7 @@ public class IssuedDocumentService {
     private final DocumentVerificationRepository verificationRepository;
     private final DocumentDownloadEventRepository downloadRepository;
     private final VerificationAttemptRepository attemptRepository;
+    private final com.fnph.telepsychiatric.storage.StorageService storageService;
     private final ConfigurationService configuration;
     private final AuditService auditService;
 
@@ -64,6 +67,55 @@ public class IssuedDocumentService {
     public IssuedDocument issue(DocumentType type, Long sourceId, Patient patient) {
         return documentRepository.findByDocumentTypeAndSourceId(type, sourceId)
                 .orElseGet(() -> create(type, sourceId, patient));
+    }
+
+    /**
+     * Attaches the rendered file to an issued document.
+     *
+     * Rendered once, at issue, not on every download. Re-rendering would let a
+     * copy the patient printed in March differ from the same document
+     * downloaded in June while both carried the same issue number.
+     */
+    @Transactional
+    public IssuedDocument attachRendered(Long documentId, byte[] pdf, String contentType) {
+        IssuedDocument document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new DocumentException("No such document"));
+
+        StoredObject stored = storageService.store(StorageArea.DOCUMENTS,
+                new java.io.ByteArrayInputStream(pdf),
+                document.getIssueNumber() + ".pdf", contentType);
+
+        document.setStorageArea(stored.area());
+        document.setStoragePath(stored.path());
+        document.setFileChecksum(stored.checksum());
+        document.setFileSizeBytes(stored.sizeBytes());
+        document.setContentType(contentType);
+        return documentRepository.save(document);
+    }
+
+    /**
+     * Opens the rendered file, verifying it on the way out.
+     *
+     * Separate from claimDownload so the allowance is spent only when the bytes
+     * are actually about to be delivered. Claiming first and failing to read
+     * would burn a patient's single download on a file that never arrived.
+     */
+    @Transactional(readOnly = true)
+    public RenderedFile openRendered(IssuedDocument document) {
+        if (document.getStoragePath() == null) {
+            throw new DocumentException(
+                    "That document has not been rendered yet. Contact the helpdesk.");
+        }
+        return new RenderedFile(
+                storageService.read(document.getStorageArea(), document.getStoragePath(),
+                        document.getFileChecksum()),
+                document.getIssueNumber() + ".pdf",
+                document.getContentType() == null ? "application/pdf" : document.getContentType(),
+                document.getFileSizeBytes() == null ? 0 : document.getFileSizeBytes());
+    }
+
+    public record RenderedFile(java.io.InputStream stream, String filename,
+                               String contentType, long sizeBytes) {
     }
 
     private IssuedDocument create(DocumentType type, Long sourceId, Patient patient) {
@@ -275,6 +327,22 @@ public class IssuedDocumentService {
         // the point: a patient holding a printed page finds out it is no
         // longer valid rather than presenting it at a pharmacy.
         return document;
+    }
+
+    /**
+     * Withdraws the document rendered from a clinical record.
+     *
+     * Used when a prescription is superseded. The caller knows the prescription,
+     * not the document, and a copy the patient already holds has to stop
+     * verifying as valid at a pharmacy counter.
+     *
+     * Silent when no document was ever issued, which is normal: a prescription
+     * corrected before the bundle was released has nothing in a patient's hands.
+     */
+    @Transactional
+    public void revokeForSource(DocumentType type, Long sourceId, String reason) {
+        documentRepository.findByDocumentTypeAndSourceId(type, sourceId)
+                .ifPresent(document -> revoke(document.getPublicId(), reason));
     }
 
     @Transactional(readOnly = true)

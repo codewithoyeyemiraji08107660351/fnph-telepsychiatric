@@ -69,6 +69,9 @@ public final class Permissions {
 
     // --- ehr ---------------------------------------------------------
     /** Upload an EHR verification export. */
+    /** Reading an enrolment code to a patient present at a desk. See V21. */
+    public static final String ENROLMENT_RELEASE_CODE = "enrolment.release_code";
+
     public static final String EHR_IMPORT_UPLOAD = "ehr_import.upload";
     /** Make an uploaded export the active verification source. */
     public static final String EHR_IMPORT_ACTIVATE = "ehr_import.activate";
@@ -103,6 +106,11 @@ public final class Permissions {
     /** View uploaded documents. */
     public static final String UPLOAD_READ = "upload.read";
     /** Quarantine or release a scanned upload. */
+    public static final String UPLOAD_READ_OWN = "upload.read_own";
+
+    /** Central Administrator and ICT only. See V19 for why it is that narrow. */
+    public static final String UPLOAD_DELETE = "upload.delete";
+
     public static final String UPLOAD_QUARANTINE = "upload.quarantine";
 
     // --- schedule ----------------------------------------------------

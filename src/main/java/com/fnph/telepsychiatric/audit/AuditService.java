@@ -59,10 +59,10 @@ public class AuditService {
             // administrator and the effective principal is whoever they are
             // acting as. Both are recorded, because "who did this" has two
             // correct answers and an auditor needs both.
-            SupervisionContext supervision = SupervisionContext.current();
+            SupervisionContext.Snapshot supervision = SupervisionContext.current();
             if (supervision != null) {
                 entry.setEffectivePrincipal(
-                        userRepository.findById(supervision.targetUserId()).orElse(null));
+                        userRepository.findById(((SupervisionContext.Snapshot) supervision).targetUserId()).orElse(null));
                 entry.setViewAsSessionId(supervision.viewAsSessionId());
             }
 

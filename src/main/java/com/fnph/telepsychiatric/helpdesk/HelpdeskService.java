@@ -294,4 +294,44 @@ public class HelpdeskService {
         return ticketRepository.findByPublicId(publicId)
                 .orElseThrow(() -> new IllegalArgumentException("No such ticket"));
     }
+
+    /**
+     * Assigns a ticket to a named agent.
+     *
+     * Different from escalation: escalating moves it to another team, assigning
+     * keeps it here and says who is working it. Without it two agents open the
+     * same ticket and both reply, which the requester experiences as the
+     * hospital disagreeing with itself.
+     *
+     * Does not touch the first-response clock. That is measured from arrival,
+     * because a patient waiting does not care when somebody picked it up.
+     */
+    @Transactional
+    public SupportTicket assign(String ticketPublicId, String agentPublicId) {
+        SupportTicket ticket = require(ticketPublicId);
+
+        Users agent = userRepository.findByPublicId(agentPublicId)
+                .orElseThrow(() -> new IllegalArgumentException("No such agent"));
+
+        String previous = ticket.getAssignedTo() == null
+                ? null : ticket.getAssignedTo().getUsername();
+
+        ticket.setAssignedTo(agent);
+        ticket.setAssignedAt(LocalDateTime.now());
+        if (ticket.getStatus() == TicketStatus.OPEN) {
+            transition(ticket, TicketStatus.IN_PROGRESS, "Assigned to " + agent.getUsername());
+        } else {
+            ticketRepository.save(ticket);
+        }
+
+        record(ticket.getId(), "ASSIGNED", previous, agent.getUsername(), null);
+
+        notifications.notifyUser(agent, NotificationType.SUPPORT_TICKET_UPDATE,
+                "A support ticket was assigned to you",
+                "%s: %s".formatted(ticket.getCategory().name(), ticket.getSubject()),
+                "/helpdesk/tickets/" + ticket.getPublicId(),
+                "SupportTicket", ticket.getId());
+
+        return ticket;
+    }
 }
