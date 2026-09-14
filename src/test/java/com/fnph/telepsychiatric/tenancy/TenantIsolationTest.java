@@ -1,18 +1,24 @@
 package com.fnph.telepsychiatric.tenancy;
 
-import com.fnph.telepsychiatric.appointment.CentreAppointment;
 import com.fnph.telepsychiatric.center.Center;
 import com.fnph.telepsychiatric.center.CenterRepository;
+import com.fnph.telepsychiatric.centre.CentreReferral;
+import com.fnph.telepsychiatric.centre.CentreReferralRepository;
+import com.fnph.telepsychiatric.centre.ReferralStatus;
+import com.fnph.telepsychiatric.centre.ReferralUrgency;
+import com.fnph.telepsychiatric.notification.NotificationRepository;
 import com.fnph.telepsychiatric.patient.CentrePatient;
 import com.fnph.telepsychiatric.patient.CentrePatientRepository;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
@@ -22,21 +28,30 @@ import static org.assertj.core.api.Assertions.*;
  *
  * This is the one that stays green or the build stops. A centre must not be
  * able to reach another centre's data by any route: a list query, a primary
- * key lookup with an altered identifier, an existence check, a count, or a
- * write.
+ * key lookup with an altered identifier, an existence check, a count, a
+ * derived query, a named query, or a write.
  *
- * <h2>TEMPORARY: running against local MySQL, not a container</h2>
+ * <h2>Runs against the Docker MySQL 8.4 instance</h2>
  *
- * The container form is the correct one and must be restored. Testcontainers
- * cannot reach Docker Desktop on this machine, and the question this file
- * exists to answer is whether a Hibernate filter reaches a derived query.
- * That is Java-side behaviour, identical on MySQL 8.0 and 8.4, so a local
- * instance answers it.
+ * Port 3307, schema {@code telepsychiatric_test}, user {@code fnph_app}: the
+ * same server and the same version the application runs on. Overridable with
+ * {@code -Dtest.db.port}, {@code -Dtest.db.username} and
+ * {@code -Dtest.db.password}.
  *
- * What a local instance does NOT answer is the schema behaviour the original
- * comment was about: BIT columns, multiple NULLs under a unique index, check
- * constraints, InnoDB row locking. Restore the container before this file is
- * trusted for any of that, and do not commit it in this state.
+ * Matching the production engine matters here rather than being a convenience.
+ * BIT columns, multiple NULLs under a unique index, check constraints and
+ * InnoDB row locking all differ between engines and versions, and several
+ * assertions below depend on them.
+ *
+ * <h2>What this suite learned the hard way</h2>
+ *
+ * Tests 06 and 06b originally asserted that the Hibernate filter in
+ * {@link TenantAwareRepository} covered derived queries without being told to.
+ * It does not. Spring Data executes a derived query and an {@code @Query}
+ * without passing through that class, so {@code applyTenantFilter} never runs.
+ * Both tests failed against MySQL, returning another centre's patient, and the
+ * fix was to name the centre in the query rather than to trust a filter nobody
+ * had enabled.
  */
 @SpringBootTest
 @TestMethodOrder(MethodOrderer.DisplayName.class)
@@ -45,13 +60,15 @@ class TenantIsolationTest {
     @DynamicPropertySource
     static void datasource(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url",
-                () -> "jdbc:mysql://localhost:3306/telepsychiatric_test"
+                () -> "jdbc:mysql://localhost:"
+                        + System.getProperty("test.db.port", "3307")
+                        + "/telepsychiatric_test"
                         + "?useSSL=false&allowPublicKeyRetrieval=true"
                         + "&serverTimezone=UTC&characterEncoding=UTF-8");
         registry.add("spring.datasource.username",
-                () -> System.getProperty("test.db.username", "root"));
+                () -> System.getProperty("test.db.username", "fnph_app"));
         registry.add("spring.datasource.password",
-                () -> System.getProperty("test.db.password", ""));
+                () -> System.getProperty("test.db.password", "apppass"));
 
         registry.add("application.security.jwt.secret-key",
                 () -> "dGVzdC1zZWNyZXQta2V5LWZvci10ZXN0aW5nLW9ubHktMzJieXRlcy1taW5pbXVt");
@@ -61,8 +78,8 @@ class TenantIsolationTest {
         // never imports .env, so under surefire none of these resolve. Supplied
         // by their raw names so the ${...} references resolve without needing to
         // know each internal property path.
-        registry.add("DB_USERNAME", () -> System.getProperty("test.db.username", "root"));
-        registry.add("DB_PASSWORD", () -> System.getProperty("test.db.password", ""));
+        registry.add("DB_USERNAME", () -> System.getProperty("test.db.username", "fnph_app"));
+        registry.add("DB_PASSWORD", () -> System.getProperty("test.db.password", "apppass"));
         registry.add("MAIL_HOST", () -> "localhost");
         registry.add("MAIL_USERNAME", () -> "test");
         registry.add("MAIL_PASSWORD", () -> "test");
@@ -76,17 +93,34 @@ class TenantIsolationTest {
     }
 
     @Autowired javax.sql.DataSource dataSource;
+    @Autowired jakarta.persistence.EntityManagerFactory entityManagerFactory;
     @Autowired CenterRepository centreRepository;
     @Autowired CentrePatientRepository centrePatientRepository;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @Autowired CentreReferralRepository referralRepository;
 
     private Long centreA;
     private Long centreB;
     private Long patientOfA;
     private Long patientOfB;
 
+
     @BeforeEach
     void seedTwoCentres() {
         TenantContext.set(TenantScope.hospital("test setup"));
+
+        // Delete first, outside the persistence context.
+        //
+        // Two tests in this class assert on behaviour that never touches the
+        // database, so they carry no @Transactional and their seed rows commit.
+        // Everything after them then collided on
+        // uk_centre_patients_centre_local_id. Cleaning up front costs one
+        // statement and removes the ordering dependency entirely, which is
+        // better than making every test transactional and hoping nobody adds
+        // one that is not.
+        jdbc.update("DELETE FROM centre_patients WHERE centre_patient_id IN (?, ?, ?)",
+                "A-0001", "B-0001", "SMUGGLED-1");
 
         List<Center> centres = centreRepository.findAll();
         centreA = centres.get(0).getId();
@@ -188,55 +222,71 @@ class TenantIsolationTest {
     }
 
     @Test
-    @DisplayName("06 a derived query respects the tenant without being told to")
+    @DisplayName("06 a derived query names the centre and is scoped by it")
     @Transactional
     void derivedQueriesAreScoped() {
-        // The point of enforcing in the repository base class: a query method
-        // written later, by someone who has never heard of the filter, is
-        // covered anyway.
+        // This test used to assert that the filter covered derived queries
+        // without being told to, and it failed: Spring Data executes a derived
+        // query without passing through TenantAwareRepository, so no filter is
+        // ever enabled and the query returned centre B's patient.
+        //
+        // Centre-local identifiers are unique per centre and not globally, so
+        // an unscoped lookup on one is ambiguous as well as leaky.
         TenantContext.set(TenantScope.centre(centreA));
 
-        assertThat(centrePatientRepository.findByCentrePatientId("B-0001")).isEmpty();
-        assertThat(centrePatientRepository.findByCentrePatientId("A-0001")).isPresent();
+        assertThat(centrePatientRepository
+                .findByCentreIdAndCentrePatientId(centreA, "B-0001")).isEmpty();
+        assertThat(centrePatientRepository
+                .findByCentreIdAndCentrePatientId(centreA, "A-0001")).isPresent();
     }
 
     @Test
-    @DisplayName("06b a derived query is scoped on a session with no prior CRUD call")
+    @DisplayName("06b a centre-named query is scoped with no session state from setup")
     @Transactional
     void derivedQueryIsScopedWithoutAPriorCrudCall() {
-        // Test 06 cannot distinguish two outcomes, because @BeforeEach runs
-        // findAll and save inside this same transaction, and a Hibernate filter
-        // enabled once stays enabled for the whole session. So 06 can pass
-        // because the filter was switched on during setup rather than because
-        // derived queries are covered.
+        // Test 06 alone cannot distinguish two outcomes, because @BeforeEach
+        // runs findAll and save inside this same transaction and a Hibernate
+        // filter enabled once stays enabled for the whole session. So 06 could
+        // pass because setup switched a filter on rather than because the query
+        // scoped itself.
         //
-        // Production does not look like that. A controller whose first
-        // repository call is findByPublicId opens a session where no overridden
-        // CRUD method has run, and if the filter is only enabled inside those
-        // methods it is never enabled at all.
-        //
-        // This clears the session first, which detaches everything and forces
-        // the derived query to go to the database on its own terms.
+        // Clearing the session detaches everything and forces the query to the
+        // database on its own terms, which is what a controller whose first
+        // repository call is a lookup actually does.
         TenantContext.set(TenantScope.centre(centreA));
 
         var em = ((org.springframework.orm.jpa.EntityManagerHolder)
                 org.springframework.transaction.support.TransactionSynchronizationManager
-                        .getResource(dataSourceBackedEntityManagerFactory()))
+                        .getResource(entityManagerFactory))
                 .getEntityManager();
         em.flush();
         em.clear();
 
-        assertThat(centrePatientRepository.findByCentrePatientId("B-0001"))
-                .as("a derived query on a session where no CRUD method has run must "
-                        + "still be tenant scoped, or findByPublicId on any of the 43 "
-                        + "controllers reaches another centre's rows")
+        assertThat(centrePatientRepository
+                .findByCentreIdAndCentrePatientId(centreA, "B-0001"))
+                .as("the query's own predicate must scope it, with nothing carried over "
+                        + "from setup")
                 .isEmpty();
     }
 
-    @Autowired jakarta.persistence.EntityManagerFactory entityManagerFactory;
+    @Test
+    @DisplayName("06c a name search does not reach other centres")
+    @Transactional
+    void nameSearchIsScoped() {
+        // Wider than the altered-identifier case and needing no identifier at
+        // all: an unscoped search on a common name tells a coordinator that a
+        // named person is a psychiatric patient somewhere in the network.
+        //
+        // Both seeded patients share the surname "Test", so an unscoped search
+        // returns two rows and a scoped one returns one.
+        TenantContext.set(TenantScope.centre(centreA));
 
-    private jakarta.persistence.EntityManagerFactory dataSourceBackedEntityManagerFactory() {
-        return entityManagerFactory;
+        List<CentrePatient> found = centrePatientRepository.search(centreA, "Test");
+
+        assertThat(found).isNotEmpty();
+        assertThat(found).allSatisfy(p ->
+                assertThat(p.getCentre().getId()).isEqualTo(centreA));
+        assertThat(found).noneMatch(p -> p.getId().equals(patientOfB));
     }
 
     // -----------------------------------------------------------------
@@ -308,6 +358,19 @@ class TenantIsolationTest {
     }
 
     @Test
+    @DisplayName("10b a centre-only path refuses a principal with no centre")
+    void requireCentreIdRefusesAnUnscopedPrincipal() {
+        // The counterpart to 10. A filtered query returning nothing is right
+        // for a list, and wrong for an endpoint that only makes sense for a
+        // centre: an empty result there reads as a data problem rather than as
+        // the wrong caller.
+        TenantContext.set(TenantScope.hospital("Hub Coordinator on a centre-only path"));
+
+        assertThatThrownBy(TenantContext::requireCentreId)
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     @DisplayName("11 a patient principal reaches no centre data at all")
     @Transactional
     void patientScopeReachesNoCentreData() {
@@ -341,26 +404,43 @@ class TenantIsolationTest {
     // -----------------------------------------------------------------
 
     /**
-     * The only two entities allowed to carry a tenant key without being tenant
-     * filtered, each for a stated reason.
+     * Entities carrying a tenant key that are deliberately not tenant filtered.
      *
-     * <b>Users</b> — authentication has to find the account before any tenant
-     * scope exists, so a filter here would make signing in impossible. Access
-     * to other people's accounts is guarded by the {@code user.read} permission
-     * instead, and no centre role holds it.
+     * <b>Users</b> — authentication must find the account before any tenant
+     * scope exists, so a filter here would make signing in impossible. Guarded
+     * by {@code user.read}, which no centre role holds.
      *
-     * <b>AuditLog</b> — append-only, and readable only by holders of
-     * {@code audit.read}, which no centre role has. Filtering it would also
-     * break the Central Administrator's cross-centre audit view, which is the
-     * one place a cross-tenant attempt becomes visible.
+     * <b>AuditLog</b> — append-only, guarded by {@code audit.read}. Filtering
+     * it would also break the Central Administrator's cross-centre audit view,
+     * the one place a cross-tenant attempt becomes visible.
+     *
+     * <b>Notification</b> — scoped explicitly instead: countUnread and
+     * findInbox both carry the centre in their predicate. A filter here would
+     * be worse than nothing, because notifyUser and notifyPatient leave
+     * centre_id null by design and every personally addressed notification
+     * would disappear from its owner's inbox. Asserted in 14b.
+     *
+     * <b>ConsentAcceptance</b> and <b>TriageResponse</b> — guarded by
+     * {@code consent.read} and {@code triage.read}. Centre roles hold only
+     * consent.accept and triage.submit.
+     *
+     * <b>WalletAlert</b> — guarded by {@code wallet.read_balance}, held by
+     * Finance and the Central Administrator only. Module 3 states centres do
+     * not see wallet amounts.
+     *
+     * <b>NotificationBroadcast</b> — guarded by {@code notification.send},
+     * which no centre role holds.
      *
      * Anything else appearing here is an omission, not an exception.
      */
-    private static final List<String> JUSTIFIED_EXCEPTIONS = List.of("Users", "AuditLog");
+    private static final List<String> JUSTIFIED_EXCEPTIONS = List.of(
+            "Users", "AuditLog", "Notification", "ConsentAcceptance",
+            "TriageResponse", "WalletAlert", "NotificationBroadcast");
 
     @Test
     @DisplayName("13 every entity with a centre_id implements TenantOwned")
-    void everyTenantTableIsEnforced() throws Exception {
+    @Transactional
+    void everyTenantTableIsEnforced() {
         // Catches the real failure mode: someone adds a centre-owned entity in
         // six months and does not implement the interface, so it silently sits
         // outside every check in this file.
@@ -368,7 +448,7 @@ class TenantIsolationTest {
         var entities = reflections.getTypesAnnotatedWith(jakarta.persistence.Entity.class);
 
         List<String> unenforced = entities.stream()
-                .filter(type -> java.util.Arrays.stream(type.getDeclaredFields())
+                .filter(type -> Arrays.stream(type.getDeclaredFields())
                         .anyMatch(f -> {
                             var jc = f.getAnnotation(jakarta.persistence.JoinColumn.class);
                             var c = f.getAnnotation(jakarta.persistence.Column.class);
@@ -388,7 +468,8 @@ class TenantIsolationTest {
     }
 
     @Test
-    @DisplayName("14 no centre role can read the two justified exceptions")
+    @DisplayName("14 no centre role can read the permission-guarded exceptions")
+    @Transactional
     void justifiedExceptionsAreGuardedByPermission() {
         // The exceptions above are only safe because permission stops centre
         // roles reaching them. If that ever changes, the exception becomes a
@@ -402,12 +483,82 @@ class TenantIsolationTest {
                   JOIN roles r       ON r.id = rp.role_id
                   JOIN permissions p ON p.id = rp.permission_id
                 WHERE r.scope = 'CENTRE'
-                  AND p.code IN ('user.read', 'user.create', 'user.update', 'audit.read', 'audit.export')
+                  AND p.code IN ('user.read', 'user.create', 'user.update',
+                                 'audit.read', 'audit.export',
+                                 'consent.read', 'triage.read',
+                                 'wallet.read_balance', 'notification.send')
                 """, String.class);
 
         assertThat(crossings)
-                .as("Users and AuditLog sit outside the tenant filter and are guarded by "
+                .as("these entities sit outside the tenant filter and are guarded by "
                         + "permission alone. No centre role may hold these.")
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName("14b Notification's exception holds only while its queries name the centre")
+    void notificationQueriesAreCentreScoped() {
+        // Notification is the one exception that does not rest on permission:
+        // every centre role holds notification.read_own. It rests on the inbox
+        // queries scoping themselves. If either loses its centre predicate the
+        // exception silently becomes a hole, so it is asserted rather than
+        // trusted to the comment above.
+        var inboxQueries = Arrays.stream(NotificationRepository.class.getDeclaredMethods())
+                .filter(m -> m.getName().equals("findInbox")
+                        || m.getName().equals("countUnread"))
+                .toList();
+
+        assertThat(inboxQueries)
+                .as("findInbox and countUnread must both exist on NotificationRepository")
+                .hasSize(2);
+
+        assertThat(inboxQueries).allSatisfy(m -> {
+            Query query = m.getAnnotation(Query.class);
+            assertThat(query)
+                    .as("%s must be an explicit @Query, not a derived query", m.getName())
+                    .isNotNull();
+            assertThat(query.value())
+                    .as("%s must constrain the centre", m.getName())
+                    .contains("centreId");
+        });
+    }
+
+    @Test
+    @Transactional
+    @DisplayName("15 a referral is invisible and uncountable from another centre")
+    void referralLookupIsCentreScoped() {
+        TenantContext.set(TenantScope.centre(centreA));
+        CentreReferral referral = new CentreReferral();
+        referral.setCentre(centreRepository.findById(centreA).orElseThrow());
+        referral.setCentrePatient(
+                centrePatientRepository.findById(patientOfA).orElseThrow());
+        referral.setReferralReason("Follow-up after discharge");
+        referral.setStatus(ReferralStatus.SUBMITTED);
+        referral.setUrgency(ReferralUrgency.ROUTINE);
+        referral.setReferralReason("Follow-up after discharge");
+        // The service generates this on create. Saving the entity directly
+        // skips that, and the column is NOT NULL.
+        referral.setReference("TEST-REF-" + System.nanoTime());
+        referral.setStatus(ReferralStatus.SUBMITTED);
+        CentreReferral saved = referralRepository.save(referral);
+
+        assertThat(referralRepository
+                .findByCentreIdAndPublicId(centreA, saved.getPublicId()))
+                .isPresent();
+        assertThat(referralRepository
+                .countByCentreIdAndStatus(centreA, ReferralStatus.SUBMITTED))
+                .isEqualTo(1);
+
+        // Centre B sees neither the row nor the count. The count matters
+        // separately: /centres/me/utilisation showed every centre the whole
+        // network's totals, which named nobody but disclosed how busy the
+        // other 22 centres were.
+        TenantContext.set(TenantScope.centre(centreB));
+        assertThat(referralRepository
+                .findByCentreIdAndPublicId(centreB, saved.getPublicId()))
+                .isEmpty();
+        assertThat(referralRepository
+                .countByCentreIdAndStatus(centreB, ReferralStatus.SUBMITTED))
+                .isZero();
     }
 }

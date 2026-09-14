@@ -9,6 +9,7 @@ import com.fnph.telepsychiatric.storage.StorageService;
 import com.fnph.telepsychiatric.storage.StoredObject;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -44,6 +45,9 @@ public class UploadService {
     private final PatientRepository patientRepository;
     private final StorageService storageService;
     private final AuditService auditService;
+
+    @Value("${application.storage.require-clean-scan:false}")
+    private boolean requireCleanScan;
 
     @Transactional
     public FileUpload upload(MultipartFile file, FileCategory category,
@@ -147,13 +151,46 @@ public class UploadService {
 
     private void assertReadable(FileUpload upload) {
         CurrentUser.get().ifPresent(principal -> {
-            if (principal.getPatientId() != null && upload.getPatient() != null
-                    && !principal.getPatientId().equals(upload.getPatient().getId())) {
-                // Same message as a missing file. Confirming it exists would let
-                // a patient probe for other people's uploads.
-                throw new UploadException("No such file");
+            if (principal.getPatientId() != null) {
+                if (upload.getPatient() == null
+                        || !principal.getPatientId().equals(upload.getPatient().getId())) {
+                    // Same message as a missing file. Confirming it exists
+                    // would let a caller probe for other people's uploads.
+                    throw new UploadException("No such file");
+                }
+                return;
             }
+
+            if (principal.getCentreId() != null) {
+                if (upload.resolveCentreId() == null
+                        || !principal.getCentreId().equals(upload.resolveCentreId())) {
+                    throw new UploadException("No such file");
+                }
+                return;
+            }
+
+            // Neither patient nor centre: FNPH staff, bounded by permission.
         });
+
+        // Judged unsafe by a human. Refused regardless of the flag, because
+        // the quarantine endpoint exists precisely so ICT can make that call.
+        if (upload.getScanStatus() == ScanStatus.QUARANTINED
+                || upload.getScanStatus() == ScanStatus.REJECTED) {
+            log.warn("Refused {} file {} requested by {}",
+                    upload.getScanStatus(), upload.getPublicId(),
+                    CurrentUser.usernameOrSystem());
+            throw new UploadException(
+                    "This file is not available. It was withheld during a security check. "
+                            + "Contact the help desk if you need it.");
+        }
+
+        if (requireCleanScan && upload.getScanStatus() != ScanStatus.CLEAN) {
+            log.warn("Refused unscanned file {} (status {}) requested by {}",
+                    upload.getPublicId(), upload.getScanStatus(),
+                    CurrentUser.usernameOrSystem());
+            throw new UploadException(
+                    "This file has not finished its security check. Try again shortly.");
+        }
     }
 
     public record FileContent(InputStream stream, String filename,

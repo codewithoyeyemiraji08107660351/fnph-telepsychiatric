@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.fnph.telepsychiatric.tenancy.TenantContext;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -159,18 +160,20 @@ public class CentreReferralService {
 
     @Transactional(readOnly = true)
     public List<CentreBundleReceipt> incoming() {
-        return receiptRepository.findAllByTreatedAtIsNullOrderByDeliveredAtAsc();
+        return receiptRepository.findAllByCentreIdAndTreatedAtIsNullOrderByDeliveredAtAsc(
+                TenantContext.requireCentreId());
     }
+
 
     @Transactional(readOnly = true)
     public List<CentreBundleReceipt> treatedHistory() {
-        return receiptRepository.findAllByTreatedAtIsNotNullOrderByTreatedAtDesc();
+        return receiptRepository.findAllByCentreIdAndTreatedAtIsNotNullOrderByTreatedAtDesc(
+                TenantContext.requireCentreId());
     }
 
     @Transactional
     public CentreBundleReceipt open(String receiptPublicId) {
-        CentreBundleReceipt receipt = receiptRepository.findByPublicId(receiptPublicId)
-                .orElseThrow(() -> new IllegalArgumentException("No such item"));
+        CentreBundleReceipt receipt = requireReceipt(receiptPublicId);
 
         if (receipt.getFirstOpenedAt() == null) {
             receipt.setFirstOpenedAt(LocalDateTime.now());
@@ -189,8 +192,7 @@ public class CentreReferralService {
      */
     @Transactional
     public CentreBundleReceipt markTreated(String receiptPublicId, String notes) {
-        CentreBundleReceipt receipt = receiptRepository.findByPublicId(receiptPublicId)
-                .orElseThrow(() -> new IllegalArgumentException("No such item"));
+        CentreBundleReceipt receipt = requireReceipt(receiptPublicId);
 
         if (receipt.getTreatedAt() != null) {
             return receipt;
@@ -227,17 +229,26 @@ public class CentreReferralService {
      */
     @Transactional(readOnly = true)
     public UtilisationSummary utilisation() {
+        Long centreId = TenantContext.requireCentreId();
         return new UtilisationSummary(
-                referralRepository.countByStatus(ReferralStatus.SUBMITTED),
-                referralRepository.countByStatus(ReferralStatus.SCHEDULED),
-                referralRepository.countByStatus(ReferralStatus.COMPLETED),
-                receiptRepository.countByTreatedAtIsNull());
+                referralRepository.countByCentreIdAndStatus(centreId, ReferralStatus.SUBMITTED),
+                referralRepository.countByCentreIdAndStatus(centreId, ReferralStatus.SCHEDULED),
+                referralRepository.countByCentreIdAndStatus(centreId, ReferralStatus.COMPLETED),
+                receiptRepository.countByCentreIdAndTreatedAtIsNull(centreId));
+    }
+
+    private CentreBundleReceipt requireReceipt(String publicId) {
+        return receiptRepository
+                .findByCentreIdAndPublicId(TenantContext.requireCentreId(), publicId)
+                .orElseThrow(() -> new IllegalArgumentException("No such item"));
     }
 
     private CentreReferral require(String publicId) {
-        return referralRepository.findByPublicId(publicId)
+        return referralRepository
+                .findByCentreIdAndPublicId(TenantContext.requireCentreId(), publicId)
                 .orElseThrow(() -> new IllegalArgumentException("No such referral"));
     }
+
 
     public record ReferralDetails(String referralReason, String assessment,
                                   String currentCondition, String relevantMedicines,

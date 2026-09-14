@@ -5,9 +5,9 @@ spring:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 
   datasource:
-    url: jdbc:mysql://localhost:3307/telepsychiatric?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
-    username: root
-    password: oyeyemi
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:telepsychiatric}?useSSL=${DB_USE_SSL:true}&requireSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: ${DB_POOL_MAX:20}
@@ -216,6 +216,7 @@ application:
     # though intact is worse than a failed download.
     verify-checksum-on-read: true
     free-space-warning-percent: 20
+    require-clean-scan: ${UPLOAD_REQUIRE_CLEAN_SCAN:false}
 
   video:
     provider: ${VIDEO_PROVIDER:daily}

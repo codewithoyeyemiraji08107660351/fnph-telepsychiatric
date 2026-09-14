@@ -61,9 +61,6 @@ public class CentreConsultationNote extends BaseEntity implements TenantOwned {
     @Column(name = "version", nullable = false)
     private Integer version = 1;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "supersedes_id")
-    private CentreConsultationNote supersedes;
 
     @Column(name = "superseded_at")
     private LocalDateTime supersededAt;

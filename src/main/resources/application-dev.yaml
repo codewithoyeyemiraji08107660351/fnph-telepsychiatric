@@ -18,3 +18,5 @@ management:
   endpoint:
     health:
       show-details: always
+encryption_key:
+  Lw9wI+VLyCAe6loiY26YBlszMTZ80Q80f3ChecQiS3I

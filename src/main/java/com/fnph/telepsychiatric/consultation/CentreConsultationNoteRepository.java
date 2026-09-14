@@ -20,4 +20,14 @@ public interface CentreConsultationNoteRepository
             detail = "Amendment history for an already-resolved consultation")
     List<CentreConsultationNote> findAllByCentreConsultationIdOrderByVersionDesc(
             Long centreConsultationId);
+
+    @UnscopedQuery(value = UnscopedQuery.Reason.KEYED_BY_SCOPED_PARENT,
+            detail = "centreAppointmentId comes from a CentreAppointment the consulting doctor "
+                    + "already resolved through a hospital-scoped path")
+    Optional<CentreConsultation> findByCentreAppointmentId(Long centreAppointmentId);
+
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "consulting doctor and Hub Coordinator join and supervise sessions across "
+                    + "centres; every centre-facing read uses findByCentreIdAndPublicId")
+    Optional<CentreConsultation> findByPublicId(String publicId);
 }

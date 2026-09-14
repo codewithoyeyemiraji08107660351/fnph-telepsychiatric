@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 /**
  * The centre prepaid wallet.
@@ -82,8 +83,35 @@ public class CentreWalletService {
         if (amount == null || amount.signum() <= 0) {
             throw new IllegalArgumentException("A credit must be a positive amount");
         }
+        if (reference == null || reference.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Give the funding instrument reference. It is what makes this credit "
+                            + "traceable and what stops the same funding being posted twice.");
+        }
+
         Wallet wallet = walletRepository.findByCentreId(centreId)
                 .orElseThrow(() -> new IllegalArgumentException("That centre has no wallet"));
+
+        // Replay before write. The unique index is still the guarantee under
+        // concurrency: two simultaneous requests both pass this check and one
+        // insert loses, which is correct. This exists so the ordinary retry
+        // gets an answer instead of a constraint violation.
+        Optional<WalletTransaction> existing =
+                ledgerRepository.findByTransactionReference(reference.trim());
+        if (existing.isPresent()) {
+            WalletTransaction previous = existing.get();
+            if (!previous.getWallet().getId().equals(wallet.getId())) {
+                // Same reference, different centre. Not a retry. Refusing
+                // without naming the other centre, because which centre holds
+                // a given funding reference is not this caller's business.
+                throw new IllegalArgumentException(
+                        "That reference is already used on another wallet. Check the funding "
+                                + "instrument before posting this credit.");
+            }
+            log.info("Credit {} on centre {} is a replay, returning the original entry",
+                    reference, centreId);
+            return previous;
+        }
 
         BigDecimal before = ledgerRepository.deriveBalance(wallet.getId());
         BigDecimal after = before.add(amount);
@@ -91,8 +119,7 @@ public class CentreWalletService {
         WalletTransaction entry = new WalletTransaction();
         entry.setCentre(wallet.getCentre());
         entry.setWallet(wallet);
-        entry.setTransactionReference(reference == null
-                ? "CR-" + Tokens.generateRecoveryCode().replace("-", "") : reference);
+        entry.setTransactionReference(reference.trim());
         entry.setDirection(LedgerDirection.CREDIT);
         entry.setStatus(LedgerEntryStatus.POSTED);
         entry.setAmount(amount);
@@ -112,14 +139,15 @@ public class CentreWalletService {
                 .action(AuditAction.WALLET_CREDITED)
                 .entityType("Wallet")
                 .entityId(wallet.getId())
-                .details("NGN %s credited, balance now %s".formatted(amount, after))
+                .details("NGN %s credited on %s, balance now %s"
+                        .formatted(amount, reference.trim(), after))
                 .reason(description)
                 .build());
 
-        log.info("Centre {} wallet credited {}, balance {}", centreId, amount, after);
+        log.info("Centre {} wallet credited {} on {}, balance {}",
+                centreId, amount, reference.trim(), after);
         return saved;
     }
-
     /**
      * Debits the booking charge at approval.
      *
@@ -133,6 +161,8 @@ public class CentreWalletService {
                                              String appointmentReference) {
         BigDecimal charge = configuration.getDecimal(ConfigurationKeys.CENTRE_BOOKING_CHARGE_NGN);
 
+        String reference = "DB-" + appointmentReference;
+
         Wallet wallet = walletRepository.findByCentreId(centre.getId())
                 .orElseThrow(() -> new IllegalStateException("That centre has no wallet"));
 
@@ -142,6 +172,14 @@ public class CentreWalletService {
                     "%s has NGN %s available and this booking costs NGN %s. "
                             .formatted(centre.getName(), before, charge)
                             + "Finance must credit the wallet before it can be approved.");
+        }
+
+        Optional<WalletTransaction> existing =
+                ledgerRepository.findByTransactionReference(reference);
+        if (existing.isPresent()) {
+            log.info("Booking {} is already debited, returning the original entry",
+                    appointmentReference);
+            return existing.get();
         }
 
         BigDecimal after = before.subtract(charge);

@@ -24,6 +24,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import com.fnph.telepsychiatric.tenancy.TenantContext;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -243,9 +244,11 @@ public class CentreAdminController {
     public ResponseEntity<List<Map<String, Object>>> myPatients(
             @RequestParam(required = false) String term) {
 
+        Long centreId = TenantContext.requireCentreId();
+
         var patients = (term == null || term.isBlank())
-                ? centrePatientRepository.findAllByIsActiveTrueOrderByLastNameAsc()
-                : centrePatientRepository.search(term.trim());
+                ? centrePatientRepository.findAllByCentreIdAndIsActiveTrueOrderByLastNameAsc(centreId)
+                : centrePatientRepository.search(centreId, term.trim());
 
         return ResponseEntity.ok(patients.stream().map(p -> {
             Map<String, Object> row = new java.util.LinkedHashMap<>();
@@ -270,7 +273,8 @@ public class CentreAdminController {
             @RequestParam(required = false) String email,
             @RequestParam(required = false) String address) {
 
-        var patient = centrePatientRepository.findByPublicId(centrePatientPublicId)
+        var patient = centrePatientRepository
+                .findByCentreIdAndPublicId(TenantContext.requireCentreId(), centrePatientPublicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such patient at this centre"));
 
         if (phoneNumber != null) {

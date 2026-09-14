@@ -365,12 +365,22 @@ public class IssuedDocumentService {
 
     private void assertOwnedByCaller(IssuedDocument document) {
         CurrentUser.get().ifPresent(principal -> {
-            if (principal.getPatientId() != null && document.getPatient() != null
-                    && !principal.getPatientId().equals(document.getPatient().getId())) {
-                // Same message as "no such document" would give. Confirming it
-                // exists would let a patient probe for other people's records.
-                throw new DocumentException("No such document");
+            if (principal.getPatientId() != null) {
+                if (document.getPatient() == null
+                        || !principal.getPatientId().equals(document.getPatient().getId())) {
+                    throw new DocumentException("No such document");
+                }
+                return;
             }
+
+            if (principal.getCentreId() != null) {
+                if (document.getCentre() == null
+                        || !principal.getCentreId().equals(document.getCentre().getId())) {
+                    throw new DocumentException("No such document");
+                }
+                return;
+            }
+
         });
     }
 

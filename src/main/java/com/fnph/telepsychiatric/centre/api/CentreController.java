@@ -5,6 +5,7 @@ import com.fnph.telepsychiatric.center.CenterRepository;
 import com.fnph.telepsychiatric.handler.ErrorResponse;
 import com.fnph.telepsychiatric.patient.CentrePatientRepository;
 import com.fnph.telepsychiatric.security.CurrentUser;
+import com.fnph.telepsychiatric.tenancy.TenantContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -71,7 +72,8 @@ public class CentreController {
 
         var centre = centreRepository.findById(CurrentUser.require().getCentreId())
                 .orElseThrow(() -> new EntityNotFoundException("No centre on this account"));
-        var patient = patientRepository.findByPublicId(request.centrePatientPublicId())
+        var patient = patientRepository
+                .findByCentreIdAndPublicId(centre.getId(), request.centrePatientPublicId())
                 .orElseThrow(() -> new EntityNotFoundException("No such patient at this centre"));
 
         var referral = referralService.create(centre, patient,
@@ -139,7 +141,8 @@ public class CentreController {
     @ApiResponse(responseCode = "200", description = "History returned.")
     public ResponseEntity<List<CentreReferralResponse>> history(
             @PathVariable String centrePatientPublicId) {
-        var patient = patientRepository.findByPublicId(centrePatientPublicId)
+        var patient = patientRepository
+                .findByCentreIdAndPublicId(TenantContext.requireCentreId(), centrePatientPublicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such patient at this centre"));
         return ResponseEntity.ok(referralService.historyFor(patient.getId())
                 .stream().map(this::toResponse).toList());

@@ -14,6 +14,7 @@ import com.fnph.telepsychiatric.payment.WalletTransaction;
 import com.fnph.telepsychiatric.scheduling.*;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
+import com.fnph.telepsychiatric.tenancy.TenantContext;
 import com.fnph.telepsychiatric.user.Users;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -96,7 +97,8 @@ public class CentreBookingService {
      */
     @Transactional
     public CentreAppointment requestAppointment(String referralPublicId, String slotPublicId) {
-        CentreReferral referral = referralRepository.findByPublicId(referralPublicId)
+               CentreReferral referral = referralRepository
+                .findByCentreIdAndPublicId(TenantContext.requireCentreId(), referralPublicId)
                 .orElseThrow(() -> new CentreBookingException("No such referral"));
 
         if (referral.getStatus() != ReferralStatus.SUBMITTED) {

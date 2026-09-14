@@ -56,4 +56,12 @@ public final class TenantContext {
             return null;
         });
     }
+    public static Long requireCentreId() {
+        Long centreId = current().centreId();
+        if (centreId == null) {
+            throw new IllegalStateException(
+                    "This operation requires a centre-scoped principal");
+        }
+        return centreId;
+    }
 }
