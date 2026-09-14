@@ -156,7 +156,7 @@ public class RecordingController {
 
         return ResponseEntity.ok(Map.of(
                 "reference", appointment.getReference(),
-                "appointmentDateTime", String.valueOf(appointment.getAppointmentDateTime()),
+                "appointmentDateTime", String.valueOf(appointment.getAppointmentDate()),
                 "room", String.valueOf(appointment.getRoom()),
                 "isOwner", false,
                 "note", "The FNPH clinician controls the session. You are a participant."));

@@ -150,7 +150,7 @@ public class CentreBookingController {
         return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
                 "publicId", appointment.getPublicId(),
                 "reference", appointment.getReference(),
-                "appointmentDateTime", appointment.getAppointmentDateTime(),
+                "appointmentDate", appointment.getAppointmentDate(),
                 "status", appointment.getStatus().name()));
     }
 
@@ -178,7 +178,7 @@ public class CentreBookingController {
             @RequestParam(defaultValue = "50") int size) {
 
         return ResponseEntity.ok(appointmentRepository
-                .findAllByStatusOrderByAppointmentDateTimeAsc(Status.AWAITING_APPROVAL,
+                .findAllByStatusOrderByAppointmentDateAsc(Status.AWAITING_APPROVAL,
                         PageRequest.of(page, Math.min(size, 200)))
                 .map(a -> {
                     Map<String, Object> row = new java.util.LinkedHashMap<>();
@@ -188,7 +188,7 @@ public class CentreBookingController {
                     row.put("patient", a.getCentrePatient().getFirstName() + " "
                             + a.getCentrePatient().getLastName());
                     row.put("centrePatientId", a.getCentrePatient().getCentrePatientId());
-                    row.put("appointmentDateTime", a.getAppointmentDateTime());
+                    row.put("appointmentDateTime", a.getAppointmentDate());
                     row.put("referralReason", a.getReferral() == null
                             ? null : a.getReferral().getReferralReason());
                     return row;

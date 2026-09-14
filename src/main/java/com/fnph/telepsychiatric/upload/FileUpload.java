@@ -2,6 +2,7 @@ package com.fnph.telepsychiatric.upload;
 
 import com.fnph.telepsychiatric.center.Center;
 import com.fnph.telepsychiatric.common.BaseEntity;
+import com.fnph.telepsychiatric.common.SoftDeletableEntity;
 import com.fnph.telepsychiatric.patient.CentrePatient;
 import com.fnph.telepsychiatric.patient.Patient;
 import com.fnph.telepsychiatric.tenancy.TenantFilters;
@@ -33,7 +34,7 @@ import java.time.LocalDateTime;
 @Getter
 @Setter
 @Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
-public class FileUpload extends BaseEntity implements TenantOwned {
+public class FileUpload extends SoftDeletableEntity implements TenantOwned {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "patient_id", foreignKey = @ForeignKey(name = "fk_file_uploads_patient"))
@@ -98,11 +99,6 @@ public class FileUpload extends BaseEntity implements TenantOwned {
 
     @Column(name = "reference_id", length = 50)
     private String referenceId;
-
-    private boolean deleted;
-    private LocalDateTime deletedAt;
-    private String deletedBy;
-    private String deletedReason;
 
     /**
      * Tenant key for isolation enforcement. Null means this row belongs to the

@@ -18,7 +18,7 @@ services:
       MYSQL_USER: ${DB_USERNAME:-fnph_app}
       MYSQL_PASSWORD: ${DB_PASSWORD:-apppass}
     ports:
-      - "${DB_PORT:-3306}:3306"
+      - "${MYSQL_PUBLISH_PORT:-3307}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql/fnph.cnf:/etc/mysql/conf.d/fnph.cnf:ro

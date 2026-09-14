@@ -3,10 +3,13 @@ package com.fnph.telepsychiatric.helpdesk;
 import com.fnph.telepsychiatric.center.Center;
 import com.fnph.telepsychiatric.common.BaseEntity;
 import com.fnph.telepsychiatric.patient.Patient;
+import com.fnph.telepsychiatric.tenancy.TenantFilters;
+import com.fnph.telepsychiatric.tenancy.TenantOwned;
 import com.fnph.telepsychiatric.user.Users;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.Filter;
 
 import java.time.LocalDateTime;
 
@@ -25,7 +28,8 @@ import java.time.LocalDateTime;
 @Table(name = "support_tickets")
 @Getter
 @Setter
-public class SupportTicket extends BaseEntity {
+@Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
+public class SupportTicket extends BaseEntity implements TenantOwned {
 
     @Column(name = "ticket_number", nullable = false, length = 30)
     private String ticketNumber;
@@ -105,5 +109,10 @@ public class SupportTicket extends BaseEntity {
     /** The helpdesk may never close one of these itself. */
     public boolean requiresEscalation() {
         return category == TicketCategory.CLINICAL_CONCERN;
+    }
+
+    @Override
+    public Long resolveCentreId() {
+        return centre == null ? null : centre.getId();
     }
 }

@@ -122,7 +122,7 @@ public class CentreBookingService {
         appointment.setReferral(referral);
         appointment.setSlot(slot);
         appointment.setReference("CAP-" + Tokens.generateRecoveryCode().replace("-", ""));
-        appointment.setAppointmentDateTime(slot.getStartAt());
+        appointment.setAppointmentDate(slot.getStartAt());
         appointment.setScheduledEndAt(slot.getEndAt());
         appointment.setDurationMinutes(
                 (int) java.time.Duration.between(slot.getStartAt(), slot.getEndAt()).toMinutes());
@@ -166,7 +166,7 @@ public class CentreBookingService {
             throw new CentreBookingException("A consulting doctor is required");
         }
         if (!availabilityRepository.isAvailable(doctor.getId(),
-                appointment.getAppointmentDateTime(), appointment.getScheduledEndAt())) {
+                appointment.getAppointmentDate(), appointment.getScheduledEndAt())) {
             throw new CentreBookingException(
                     "That doctor is not marked available for the whole of that slot");
         }
@@ -200,7 +200,7 @@ public class CentreBookingService {
             notifications.notifyUser(doctor, NotificationType.APPOINTMENT_APPROVED,
                     "You are assigned a centre consultation",
                     "Hub-to-hub consultation on %s in %s."
-                            .formatted(appointment.getAppointmentDateTime(), room.getName()),
+                            .formatted(appointment.getAppointmentDate(), room.getName()),
                     "/clinical/centre/" + appointment.getPublicId(),
                     "CentreAppointment", appointment.getId());
         }
@@ -209,7 +209,7 @@ public class CentreBookingService {
                 NotificationType.APPOINTMENT_APPROVED,
                 "Consultation confirmed",
                 "Your requested consultation on %s is confirmed."
-                        .formatted(appointment.getAppointmentDateTime()),
+                        .formatted(appointment.getAppointmentDate()),
                 "/centre/appointments/" + appointment.getPublicId(),
                 "CentreAppointment", appointment.getId());
 

@@ -3,6 +3,10 @@ package com.fnph.telepsychiatric.tenancy;
 import jakarta.persistence.EntityManager;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.Session;
+import org.springframework.data.domain.Example;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.support.JpaEntityInformation;
 import org.springframework.data.jpa.repository.support.SimpleJpaRepository;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,27 +17,46 @@ import java.util.Optional;
 /**
  * The base class every Spring Data repository in this application inherits.
  *
- * Tenant isolation is enforced here rather than in services or controllers,
- * because those are written one at a time by people who each have to remember.
- * This is written once and applies to every repository that exists now or
- * later, including ones added after everyone has forgotten this was a concern.
+ * <h2>What this class does and does not cover</h2>
  *
- * <h2>Two mechanisms, because one is not enough</h2>
+ * It covers the inherited {@link SimpleJpaRepository} methods, which it
+ * overrides one by one below. Two mechanisms are applied to them:
  *
- * <b>1. The Hibernate filter</b> is enabled on the session before every query.
- * It appends {@code centre_id = :centreId} to JPQL, criteria and derived
- * queries alike, so a repository method written next year is covered without
- * its author knowing the filter exists.
+ * <b>1. The Hibernate filter</b>, enabled on the session before the query
+ * runs, appending {@code centre_id = :centreId}.
  *
- * <b>2. An explicit check on {@code findById}</b>, because Hibernate filters
- * are documented not to apply to {@code EntityManager.find()}. That is exactly
- * the gap the acceptance criteria test: altering a record identifier in a URL
- * goes straight to a primary key lookup, which the filter would happily let
- * through. Without this second check the first one gives false confidence.
+ * <b>2. An explicit ownership check</b> on anything reached by primary key,
+ * because Hibernate filters are documented not to apply to
+ * {@code EntityManager.find()}. Altering a record identifier in a URL goes
+ * straight to a primary key lookup, which the filter would let through.
  *
- * The same gap exists for {@code getReferenceById} and for anything reached by
- * navigating an association from a permitted row, which is why the service
- * layer still validates before it follows a reference into another aggregate.
+ * <h2>It does NOT cover derived queries</h2>
+ *
+ * An earlier version of this documentation claimed the filter reached "JPQL,
+ * criteria and derived queries alike, so a repository method written next year
+ * is covered without its author knowing the filter exists". That was false and
+ * it is the reason nobody checked for months.
+ *
+ * A derived query such as {@code findByPublicId} is executed by Spring Data's
+ * {@code PartTreeJpaQuery}, which never invokes any method on this class, so
+ * {@link #applyTenantFilter()} never runs and no filter is enabled.
+ * {@code TenantIsolationTest} tests 06 and 06b demonstrate this against a real
+ * MySQL: a centre principal scoped to centre A calling
+ * {@code findByCentrePatientId} retrieves centre B's patient.
+ *
+ * An aspect cannot close this. Spring Data builds its own proxy with the
+ * transaction interceptor inside it, so advice added to the repository
+ * interface runs before the transaction opens and therefore before a Hibernate
+ * session exists to enable a filter on.
+ *
+ * Until the derived-query rule and its guard test are in place, <b>every
+ * derived query on a tenant-owned entity must name the centre in its own
+ * signature</b>: {@code findByCentreIdAndPublicId(Long, String)}, not
+ * {@code findByPublicId(String)}. Nothing in this class will do it for you.
+ *
+ * The same gap exists for anything reached by navigating an association from a
+ * permitted row, which is why the service layer still validates before it
+ * follows a reference into another aggregate.
  */
 @Slf4j
 public class TenantAwareRepository<T, ID> extends SimpleJpaRepository<T, ID> {
@@ -73,6 +96,11 @@ public class TenantAwareRepository<T, ID> extends SimpleJpaRepository<T, ID> {
         }
     }
 
+    /** True when the current principal is restricted to a single centre. */
+    private boolean constrained() {
+        return tenantOwned && TenantContext.current().isConstrained();
+    }
+
     /**
      * Verifies that a row reached by primary key belongs to the caller.
      *
@@ -98,6 +126,8 @@ public class TenantAwareRepository<T, ID> extends SimpleJpaRepository<T, ID> {
                     domainType.getSimpleName(), id, owning, requesting);
         }
     }
+
+    // ---------------------------------------------------------------- reads
 
     @Override
     @Transactional(readOnly = true)
@@ -132,6 +162,22 @@ public class TenantAwareRepository<T, ID> extends SimpleJpaRepository<T, ID> {
         }
     }
 
+    /**
+     * Builds its own query rather than delegating to {@link #findAll()}, so it
+     * needs the filter applied here. A caller passing a list of another
+     * centre's identifiers would otherwise receive those rows.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<T> findAllById(Iterable<ID> ids) {
+        applyTenantFilter();
+        List<T> found = super.findAllById(ids);
+        if (constrained()) {
+            found.forEach(entity -> verifyOwnership(entity, "batch"));
+        }
+        return found;
+    }
+
     @Override
     @Transactional(readOnly = true)
     public List<T> findAll() {
@@ -141,17 +187,37 @@ public class TenantAwareRepository<T, ID> extends SimpleJpaRepository<T, ID> {
 
     @Override
     @Transactional(readOnly = true)
-    public List<T> findAll(org.springframework.data.domain.Sort sort) {
+    public List<T> findAll(Sort sort) {
         applyTenantFilter();
         return super.findAll(sort);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public org.springframework.data.domain.Page<T> findAll(
-            org.springframework.data.domain.Pageable pageable) {
+    public Page<T> findAll(Pageable pageable) {
         applyTenantFilter();
         return super.findAll(pageable);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public <S extends T> Optional<S> findOne(Example<S> example) {
+        applyTenantFilter();
+        return super.findOne(example);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public <S extends T> List<S> findAll(Example<S> example) {
+        applyTenantFilter();
+        return super.findAll(example);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public <S extends T> Page<S> findAll(Example<S> example, Pageable pageable) {
+        applyTenantFilter();
+        return super.findAll(example, pageable);
     }
 
     @Override
@@ -162,11 +228,31 @@ public class TenantAwareRepository<T, ID> extends SimpleJpaRepository<T, ID> {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public <S extends T> long count(Example<S> example) {
+        applyTenantFilter();
+        return super.count(example);
+    }
+
+    // --------------------------------------------------------------- writes
+
+    @Override
     @Transactional
     public <S extends T> S save(S entity) {
         applyTenantFilter();
         assertWriteAllowed(entity);
         return super.save(entity);
+    }
+
+    /**
+     * Does not delegate to {@link #save}, so the write check is repeated here.
+     */
+    @Override
+    @Transactional
+    public <S extends T> S saveAndFlush(S entity) {
+        applyTenantFilter();
+        assertWriteAllowed(entity);
+        return super.saveAndFlush(entity);
     }
 
     @Override
@@ -175,6 +261,80 @@ public class TenantAwareRepository<T, ID> extends SimpleJpaRepository<T, ID> {
         applyTenantFilter();
         assertWriteAllowed(entity);
         super.delete(entity);
+    }
+
+    /**
+     * Loads through {@link #findById} so a centre cannot delete by guessing an
+     * identifier. A missing or foreign row is a silent no-op, matching the
+     * 404-not-403 rule.
+     */
+    @Override
+    @Transactional
+    public void deleteById(ID id) {
+        findById(id).ifPresent(this::delete);
+    }
+
+    @Override
+    @Transactional
+    public void deleteAll(Iterable<? extends T> entities) {
+        applyTenantFilter();
+        entities.forEach(this::assertWriteAllowed);
+        super.deleteAll(entities);
+    }
+
+    @Override
+    @Transactional
+    public void deleteAllById(Iterable<? extends ID> ids) {
+        ids.forEach(this::deleteById);
+    }
+
+    /**
+     * Refused for a centre principal: an unqualified delete-everything from a
+     * centre account is never a legitimate operation, and the filter does not
+     * constrain it.
+     */
+    @Override
+    @Transactional
+    public void deleteAll() {
+        assertUnscopedBulkAllowed("deleteAll");
+        super.deleteAll();
+    }
+
+    /**
+     * Bulk deletes issue a single DELETE without loading entities, so neither
+     * the filter nor the ownership check applies. Refused rather than silently
+     * unguarded.
+     */
+    @Override
+    @Transactional
+    public void deleteAllInBatch() {
+        assertUnscopedBulkAllowed("deleteAllInBatch");
+        super.deleteAllInBatch();
+    }
+
+    @Override
+    @Transactional
+    public void deleteAllInBatch(Iterable<T> entities) {
+        applyTenantFilter();
+        entities.forEach(this::assertWriteAllowed);
+        super.deleteAllInBatch(entities);
+    }
+
+    @Override
+    @Transactional
+    public void deleteAllByIdInBatch(Iterable<ID> ids) {
+        assertUnscopedBulkAllowed("deleteAllByIdInBatch");
+        super.deleteAllByIdInBatch(ids);
+    }
+
+    private void assertUnscopedBulkAllowed(String operation) {
+        if (constrained()) {
+            log.warn("Blocked unscoped bulk operation {} on {} by centre {}",
+                    operation, domainType.getSimpleName(), TenantContext.current().centreId());
+            throw new CrossTenantAccessException(
+                    domainType.getSimpleName(), operation, null,
+                    TenantContext.current().centreId());
+        }
     }
 
     /**

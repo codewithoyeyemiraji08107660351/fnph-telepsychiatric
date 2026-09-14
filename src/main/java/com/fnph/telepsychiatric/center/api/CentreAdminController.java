@@ -188,7 +188,7 @@ public class CentreAdminController {
             centre.setAddress(address);
         }
         if (contactPhone != null) {
-            centre.setContactPhone(contactPhone);
+            centre.setPhoneNumber(contactPhone);
         }
         centreRepository.save(centre);
         return ResponseEntity.ok(Map.of("updated", true));

@@ -85,6 +85,7 @@ public class NotificationController {
     }
 
     @PostMapping("/{notificationPublicId}/read")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).NOTIFICATION_READ_OWN)")
     @Operation(
             summary = "Mark one item read",
             description = """
@@ -101,6 +102,7 @@ public class NotificationController {
     }
 
     @PostMapping("/read-all")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).NOTIFICATION_READ_OWN)")
     @Operation(
             summary = "Mark everything read",
             description = """

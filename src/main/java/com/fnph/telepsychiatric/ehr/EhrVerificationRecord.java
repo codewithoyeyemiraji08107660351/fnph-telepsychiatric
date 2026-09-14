@@ -46,6 +46,12 @@ public class EhrVerificationRecord extends BaseEntity {
     @Column(name = "phone_masked", length = 20)
     private String phoneMasked;
 
+    @Column(name = "email_hash", length = 64)
+    private String emailHash;
+
+    @Column(name = "email_masked", length = 60)
+    private String emailMasked;
+
     @Column(name = "clinic", length = 100)
     private String clinic;
 

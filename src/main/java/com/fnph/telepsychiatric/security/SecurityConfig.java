@@ -4,6 +4,7 @@ import com.fnph.telepsychiatric.config.CorsProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -20,15 +21,46 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.List;
 
 /**
- * Replaces the previous configuration, which carried matchers from a
- * ride-hailing project (ADMIN, DRIVER, PASSENGER). None of those roles exist
- * in this system, so every one of those rules was dead and the paths they
- * appeared to protect were protected by nothing.
+ * Web security.
  *
- * Path matchers here are a coarse first filter only. Record-level, tenant-level
- * and state-transition authorisation is enforced in the service layer with
- * @PreAuthorize and repository scoping. Menu or route visibility is never the
- * control.
+ * <h2>Authorisation lives on the methods, not on the paths</h2>
+ *
+ * Every non-public endpoint carries {@code @PreAuthorize} with the permission
+ * it needs, checked against the permission matrix. This class decides only what
+ * is public and what requires a valid token.
+ *
+ * <h2>Why the per-path role lists were removed</h2>
+ *
+ * They were a second source of truth for the same decision, and the two
+ * disagreed in both directions.
+ *
+ * Endpoints that existed and were unreachable by anyone, because their paths
+ * were absent from the list and fell through to {@code denyAll()}: all four
+ * booking endpoints, so no patient could see or hold a slot; all five document
+ * endpoints, so no patient could collect a prescription; all six patient-record
+ * endpoints; three of the five review endpoints, so Pharmacy could see its
+ * queue and not open or submit anything; both consent endpoints, because the
+ * matcher said {@code /consents/**} and the controller publishes
+ * {@code /consent/**}.
+ *
+ * Endpoints reachable only by the wrong role, because a coarse path rule
+ * silently overrode a fine-grained permission: {@code /api/v1/clinical/**} was
+ * limited to DOCTOR, which denied the Hub Coordinator the {@code vitals.read}
+ * and {@code clinical_note.read} it holds and needs for a release check, and
+ * denied the patient the {@code vitals.submit} that makes stage three of the
+ * patient journey possible at all. {@code /api/v1/appointments/**} required
+ * ROLE_PATIENT, which denied the Hub Coordinator the cancel, reschedule and
+ * no-show endpoints that only it holds permissions for.
+ *
+ * A path matcher cannot see permissions, so it can only ever be a worse copy of
+ * the matrix. It is not defence in depth: a coarse rule that silently overrides
+ * a fine-grained one is not a second layer, it is a bug waiting for the next
+ * endpoint. The invariant that makes this safe is enforced instead by
+ * {@code EveryEndpointIsGuardedTest}, which fails the build if any mapped
+ * method lacks a permission check.
+ *
+ * Record-level and tenant-level authorisation is enforced separately in the
+ * repository layer. Menu or route visibility is never a control.
  */
 @Configuration
 @EnableWebSecurity
@@ -42,22 +74,12 @@ public class SecurityConfig {
     private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
     private final CorsProperties corsProperties;
 
-    private static final String CENTRAL_ADMINISTRATOR = "CENTRAL_ADMINISTRATOR";
-    private static final String HUB_COORDINATOR = "HUB_COORDINATOR";
-    private static final String DOCTOR = "DOCTOR";
-    private static final String PHARMACIST = "PHARMACIST";
-    private static final String LABORATORY_TECHNICIAN = "LABORATORY_TECHNICIAN";
-    private static final String NURSING = "NURSING";
-    private static final String HIM = "HIM";
-    private static final String FINANCE = "FINANCE";
-    private static final String PATIENT = "PATIENT";
-    private static final String CENTRE_HUB_COORDINATOR = "CENTRE_HUB_COORDINATOR";
-    private static final String CENTRE_ASSISTANT_COORDINATOR = "CENTRE_ASSISTANT_COORDINATOR";
-    private static final String CENTRE_PHARMACY = "CENTRE_PHARMACY";
-    private static final String CENTRE_LABORATORY = "CENTRE_LABORATORY";
-    private static final String CENTRE_HIM = "CENTRE_HIM";
+    /**
+     * The only role named in this file. Actuator endpoints are not application
+     * endpoints, carry no {@code @PreAuthorize}, and must not fall through to
+     * {@code authenticated()} where a patient token would reach them.
+     */
     private static final String ICT_SUPPORT = "ICT_SUPPORT";
-    private static final String HELPDESK = "HELPDESK";
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
@@ -77,111 +99,70 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(AbstractHttpConfigurer::disable)
-            .cors(Customizer.withDefaults())
-            .headers(headers -> headers
-                .frameOptions(frame -> frame.deny())
-                .contentTypeOptions(Customizer.withDefaults())
-                .httpStrictTransportSecurity(hsts -> hsts
-                    .includeSubDomains(true)
-                    .maxAgeInSeconds(31536000))
-            )
-            .authorizeHttpRequests(auth -> auth
+                .csrf(AbstractHttpConfigurer::disable)
+                .cors(Customizer.withDefaults())
+                .headers(headers -> headers
+                        .frameOptions(frame -> frame.deny())
+                        .contentTypeOptions(Customizer.withDefaults())
+                        .httpStrictTransportSecurity(hsts -> hsts
+                                .includeSubDomains(true)
+                                .maxAgeInSeconds(31536000))
+                )
+                .authorizeHttpRequests(auth -> auth
 
-                // Public. Enrolment, sign-in and recovery.
-                .requestMatchers("/api/v1/auth/**").permitAll()
+                        // ---------------------------------------------------------
+                        // Public
+                        // ---------------------------------------------------------
 
-                // Patient self-enrolment against the EHR snapshot. Public by
-                // necessity: the patient has no account yet. Protected by
-                // corroboration, contact verification and two-way rate
-                // limiting rather than by authentication.
-                .requestMatchers("/api/v1/enrolment/**").permitAll()
+                        // Sign-in, MFA and recovery.
+                        .requestMatchers("/api/v1/auth/**").permitAll()
 
-                // Public document verification. Returns a minimal valid/expired
-                // result only and never clinical content.
-                .requestMatchers("/api/v1/verify/**").permitAll()
+                        // Patient self-enrolment against the EHR snapshot. Public by
+                        // necessity: the patient has no account yet. Protected by
+                        // corroboration, contact verification and two-way rate
+                        // limiting rather than by authentication.
+                        .requestMatchers("/api/v1/enrolment/**").permitAll()
 
-                // Machine only. Signature verified inside the handler.
-                .requestMatchers("/api/v1/webhooks/**").permitAll()
+                        // Document verification. Returns issue number, dates and status
+                        // only, never a patient name or clinical content, because a QR
+                        // code found on the floor must not disclose that a named person
+                        // is a patient here.
+                        .requestMatchers("/api/v1/verify/**").permitAll()
 
-                .requestMatchers("/actuator/health", "/actuator/info").permitAll()
-                .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        // Machine only. Signature and payload hash verified inside the
+                        // handler, which is why authentication is not the control.
+                        .requestMatchers("/api/v1/webhooks/**").permitAll()
 
-                // Patient portal and mobile app. Centre and staff credentials
-                // must be rejected here, which is asserted by test.
-                .requestMatchers(
-                        "/api/v1/patient-profile/**",
-                        "/api/v1/triage/**",
-                        "/api/v1/consents/**",
-                        "/api/v1/vitals/**",
-                        "/api/v1/payments/**",
-                        "/api/v1/availability/**",
-                        "/api/v1/appointments/**"
-                ).hasRole(PATIENT)
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                // Hub Coordinator
-                .requestMatchers("/api/v1/hub/**")
-                        .hasAnyRole(HUB_COORDINATOR, CENTRAL_ADMINISTRATOR)
+                        // ---------------------------------------------------------
+                        // Operational surfaces. Not application endpoints, so they
+                        // carry no @PreAuthorize and cannot fall through below.
+                        // ---------------------------------------------------------
 
-                // Doctor clinical workspace
-                .requestMatchers("/api/v1/clinical/**")
-                        .hasAnyRole(DOCTOR, CENTRAL_ADMINISTRATOR)
+                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/**").hasRole(ICT_SUPPORT)
 
-                // Multidisciplinary review queues
-                .requestMatchers("/api/v1/reviews/pharmacy/**")
-                        .hasAnyRole(PHARMACIST, CENTRE_PHARMACY, CENTRAL_ADMINISTRATOR)
-                .requestMatchers("/api/v1/reviews/laboratory/**")
-                        .hasAnyRole(LABORATORY_TECHNICIAN, CENTRE_LABORATORY, CENTRAL_ADMINISTRATOR)
+                        // Disabled in the prod profile via springdoc configuration.
+                        // Left reachable here so the dev and staging profiles work.
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
 
-                // Preparation queues
-                .requestMatchers("/api/v1/queues/nursing/**")
-                        .hasAnyRole(NURSING, CENTRAL_ADMINISTRATOR)
-                .requestMatchers("/api/v1/queues/him/**")
-                        .hasAnyRole(HIM, CENTRE_HIM, CENTRAL_ADMINISTRATOR)
-
-                .requestMatchers("/api/v1/support/**").authenticated()
-
-                // Finance
-                .requestMatchers("/api/v1/finance/**")
-                        .hasAnyRole(FINANCE, CENTRAL_ADMINISTRATOR)
-
-                // Centre workspace. Tenant scoping is enforced in the repository
-                // layer, not here. This matcher only decides who may reach it.
-                .requestMatchers("/api/v1/centres/**")
-                        .hasAnyRole(CENTRE_HUB_COORDINATOR, CENTRE_ASSISTANT_COORDINATOR,
-                                    CENTRE_PHARMACY, CENTRE_LABORATORY, CENTRE_HIM,
-                                    CENTRAL_ADMINISTRATOR)
-
-                // Administration. The path matcher is a coarse first filter; the
-                // real decision is the @PreAuthorize permission check on each
-                // method, which is why the matcher only requires authentication
-                // rather than duplicating the permission list here.
-                .requestMatchers("/api/v1/admin/**")
-                        .hasAnyRole(CENTRAL_ADMINISTRATOR, ICT_SUPPORT, HELPDESK)
-
-                // Every authenticated principal may ask who they are and manage
-                // the devices signed into their own account.
-                .requestMatchers("/api/v1/me").authenticated()
-                .requestMatchers("/api/v1/sessions/**").authenticated()
-
-                // ICT and helpdesk workspaces
-                .requestMatchers("/api/v1/ict/**").hasAnyRole(ICT_SUPPORT, CENTRAL_ADMINISTRATOR)
-                .requestMatchers("/api/v1/helpdesk/**").hasAnyRole(HELPDESK, CENTRAL_ADMINISTRATOR)
-
-                // Shared authenticated surfaces
-                .requestMatchers("/api/v1/consultations/**", "/api/v1/notifications/**",
-                                 "/api/v1/support/**", "/api/v1/uploads/**").authenticated()
-
-                .anyRequest().denyAll()
-            )
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .exceptionHandling(ex -> ex
-                .authenticationEntryPoint(jwtAuthenticationEntryPoint)
-                .accessDeniedHandler(jwtAccessDeniedHandler)
-            )
-            .authenticationProvider(authenticationProvider)
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                        // ---------------------------------------------------------
+                        // Everything else
+                        //
+                        // Requires a valid token and nothing more here. The permission
+                        // check is the @PreAuthorize on the method, which is the only
+                        // place the matrix is expressed.
+                        // ---------------------------------------------------------
+                        .anyRequest().authenticated()
+                )
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(jwtAuthenticationEntryPoint)
+                        .accessDeniedHandler(jwtAccessDeniedHandler)
+                )
+                .authenticationProvider(authenticationProvider)
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

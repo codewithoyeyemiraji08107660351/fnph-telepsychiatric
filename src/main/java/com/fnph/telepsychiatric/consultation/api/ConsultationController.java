@@ -179,6 +179,7 @@ public class ConsultationController {
     }
 
     @PostMapping("/{consultationPublicId}/quality")
+    @PreAuthorize("isAuthenticated()")
     @Operation(
             summary = "Report connection quality",
             description = """

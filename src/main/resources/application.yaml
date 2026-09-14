@@ -21,6 +21,9 @@ spring:
     open-in-view: false
     show-sql: false
     properties:
+      # TEMPORARY DIAGNOSTIC. Writes the schema the 376 entity classes require
+      # to hibernate-expected.sql, without touching the database. Remove both
+      # lines once the migration drift is reconciled; this is not configuration.
       hibernate:
         format_sql: false
         # All timestamps are stored in UTC. Conversion to WAT happens at the presentation boundary.

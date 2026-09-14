@@ -24,6 +24,7 @@
         <resilience4j.version>2.2.0</resilience4j.version>
         <logstash.version>8.0</logstash.version>
         <sentry.version>7.14.0</sentry.version>
+        <testcontainers.version>1.20.4</testcontainers.version>
     </properties>
 
     <dependencies>

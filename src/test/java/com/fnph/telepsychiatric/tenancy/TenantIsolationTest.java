@@ -11,9 +11,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
-import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -28,33 +25,54 @@ import static org.assertj.core.api.Assertions.*;
  * key lookup with an altered identifier, an existence check, a count, or a
  * write.
  *
- * Written against a real MySQL container rather than H2, because the whole
- * mechanism is a Hibernate filter emitting SQL and an H2 dialect that accepted
- * it would prove nothing about production.
+ * <h2>TEMPORARY: running against local MySQL, not a container</h2>
+ *
+ * The container form is the correct one and must be restored. Testcontainers
+ * cannot reach Docker Desktop on this machine, and the question this file
+ * exists to answer is whether a Hibernate filter reaches a derived query.
+ * That is Java-side behaviour, identical on MySQL 8.0 and 8.4, so a local
+ * instance answers it.
+ *
+ * What a local instance does NOT answer is the schema behaviour the original
+ * comment was about: BIT columns, multiple NULLs under a unique index, check
+ * constraints, InnoDB row locking. Restore the container before this file is
+ * trusted for any of that, and do not commit it in this state.
  */
 @SpringBootTest
-@Testcontainers
 @TestMethodOrder(MethodOrderer.DisplayName.class)
 class TenantIsolationTest {
 
-    @Container
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
-            .withDatabaseName("telepsychiatric")
-            .withCommand("--character-set-server=utf8mb4",
-                         "--collation-server=utf8mb4_unicode_ci",
-                         "--default-time-zone=+00:00",
-                         "--sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,"
-                                 + "ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION");
-
     @DynamicPropertySource
     static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
+        registry.add("spring.datasource.url",
+                () -> "jdbc:mysql://localhost:3306/telepsychiatric_test"
+                        + "?useSSL=false&allowPublicKeyRetrieval=true"
+                        + "&serverTimezone=UTC&characterEncoding=UTF-8");
+        registry.add("spring.datasource.username",
+                () -> System.getProperty("test.db.username", "root"));
+        registry.add("spring.datasource.password",
+                () -> System.getProperty("test.db.password", ""));
+
         registry.add("application.security.jwt.secret-key",
                 () -> "dGVzdC1zZWNyZXQta2V5LWZvci10ZXN0aW5nLW9ubHktMzJieXRlcy1taW5pbXVt");
         registry.add("application.security.encryption.key",
-                () -> "dGVzdC1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcy1sb25nISE=");
+                () -> "dGVzdC1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcyEhISE=");
+        // The placeholders in application.yaml that carry no default. Spring
+        // never imports .env, so under surefire none of these resolve. Supplied
+        // by their raw names so the ${...} references resolve without needing to
+        // know each internal property path.
+        registry.add("DB_USERNAME", () -> System.getProperty("test.db.username", "root"));
+        registry.add("DB_PASSWORD", () -> System.getProperty("test.db.password", ""));
+        registry.add("MAIL_HOST", () -> "localhost");
+        registry.add("MAIL_USERNAME", () -> "test");
+        registry.add("MAIL_PASSWORD", () -> "test");
+        registry.add("MAIL_FROM", () -> "noreply@test.local");
+        registry.add("REMITA_BASE_URL", () -> "http://localhost:9999");
+        registry.add("REMITA_API_KEY", () -> "test");
+        registry.add("REMITA_API_TOKEN", () -> "test");
+        registry.add("REMITA_MERCHANT_ID", () -> "test");
+        registry.add("REMITA_SERVICE_TYPE_ID", () -> "test");
+        registry.add("REMITA_WEBHOOK_SECRET", () -> "test");
     }
 
     @Autowired javax.sql.DataSource dataSource;
@@ -180,6 +198,45 @@ class TenantIsolationTest {
 
         assertThat(centrePatientRepository.findByCentrePatientId("B-0001")).isEmpty();
         assertThat(centrePatientRepository.findByCentrePatientId("A-0001")).isPresent();
+    }
+
+    @Test
+    @DisplayName("06b a derived query is scoped on a session with no prior CRUD call")
+    @Transactional
+    void derivedQueryIsScopedWithoutAPriorCrudCall() {
+        // Test 06 cannot distinguish two outcomes, because @BeforeEach runs
+        // findAll and save inside this same transaction, and a Hibernate filter
+        // enabled once stays enabled for the whole session. So 06 can pass
+        // because the filter was switched on during setup rather than because
+        // derived queries are covered.
+        //
+        // Production does not look like that. A controller whose first
+        // repository call is findByPublicId opens a session where no overridden
+        // CRUD method has run, and if the filter is only enabled inside those
+        // methods it is never enabled at all.
+        //
+        // This clears the session first, which detaches everything and forces
+        // the derived query to go to the database on its own terms.
+        TenantContext.set(TenantScope.centre(centreA));
+
+        var em = ((org.springframework.orm.jpa.EntityManagerHolder)
+                org.springframework.transaction.support.TransactionSynchronizationManager
+                        .getResource(dataSourceBackedEntityManagerFactory()))
+                .getEntityManager();
+        em.flush();
+        em.clear();
+
+        assertThat(centrePatientRepository.findByCentrePatientId("B-0001"))
+                .as("a derived query on a session where no CRUD method has run must "
+                        + "still be tenant scoped, or findByPublicId on any of the 43 "
+                        + "controllers reaches another centre's rows")
+                .isEmpty();
+    }
+
+    @Autowired jakarta.persistence.EntityManagerFactory entityManagerFactory;
+
+    private jakarta.persistence.EntityManagerFactory dataSourceBackedEntityManagerFactory() {
+        return entityManagerFactory;
     }
 
     // -----------------------------------------------------------------

@@ -68,6 +68,7 @@ public class HelpdeskService {
         ticket.setCategory(category);
         ticket.setSubject(subject);
         ticket.setRaisedBy(raiser);
+        ticket.setCentre(raiser == null ? null : raiser.getCentre());
         ticket.setRelatedAppointmentReference(appointmentReference);
         ticket.setRelatedPaymentReference(paymentReference);
         ticket.setRelatedDocumentNumber(documentNumber);

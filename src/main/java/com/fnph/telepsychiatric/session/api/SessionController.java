@@ -15,6 +15,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -33,6 +34,7 @@ public class SessionController {
     private final SessionService sessionService;
 
     @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
     @Operation(
             summary = "Who am I, and what may I do",
             description = """
@@ -95,6 +97,7 @@ public class SessionController {
     }
 
     @GetMapping("/sessions")
+    @PreAuthorize("isAuthenticated()")
     @Operation(
             summary = "List the devices signed into my account",
             description = """
@@ -121,6 +124,7 @@ public class SessionController {
     }
 
     @DeleteMapping("/sessions/{sessionPublicId}")
+    @PreAuthorize("isAuthenticated()")
     @Operation(
             summary = "Sign out one device",
             description = """
@@ -150,6 +154,7 @@ public class SessionController {
     }
 
     @DeleteMapping("/sessions")
+    @PreAuthorize("isAuthenticated()")
     @Operation(
             summary = "Sign out every device",
             description = """

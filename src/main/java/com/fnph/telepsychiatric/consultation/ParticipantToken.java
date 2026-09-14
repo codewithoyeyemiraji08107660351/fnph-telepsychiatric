@@ -3,10 +3,13 @@ package com.fnph.telepsychiatric.consultation;
 import com.fnph.telepsychiatric.center.Center;
 import com.fnph.telepsychiatric.common.BaseEntity;
 import com.fnph.telepsychiatric.patient.Patient;
+import com.fnph.telepsychiatric.tenancy.TenantFilters;
+import com.fnph.telepsychiatric.tenancy.TenantOwned;
 import com.fnph.telepsychiatric.user.Users;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.Filter;
 
 import java.time.LocalDateTime;
 
@@ -25,7 +28,8 @@ import java.time.LocalDateTime;
 @Table(name = "participant_tokens")
 @Getter
 @Setter
-public class ParticipantToken extends BaseEntity {
+@Filter(name = TenantFilters.CENTRE_TENANT, condition = TenantFilters.CONDITION)
+public class ParticipantToken extends BaseEntity implements TenantOwned {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "consultation_id")
@@ -81,5 +85,10 @@ public class ParticipantToken extends BaseEntity {
 
     public boolean isUsable(LocalDateTime now) {
         return revokedAt == null && now.isAfter(notBefore) && now.isBefore(expiresAt);
+    }
+
+    @Override
+    public Long resolveCentreId() {
+        return centre == null ? null : centre.getId();
     }
 }
