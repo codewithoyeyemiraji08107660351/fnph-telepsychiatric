@@ -38,6 +38,8 @@ public class ClinicalReadController {
     private final ConsultationRepository consultationRepository;
     private final AppointmentRepository appointmentRepository;
     private final IssuedDocumentRepository documentRepository;
+    private final WorkQueueService workQueueService;
+    private final VitalsService vitalsService;
 
     @GetMapping("/prescriptions/mine")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).PRESCRIPTION_READ_OWN)")
@@ -271,6 +273,8 @@ public class ClinicalReadController {
                     default -> false;
                 })
                 .map(a -> {
+                    var queue = "NURSE".equals(role)
+                            ? WorkQueueService.Queue.NURSING : WorkQueueService.Queue.HIM;
                     Map<String, Object> row = new java.util.LinkedHashMap<>();
                     row.put("appointmentPublicId", a.getPublicId());
                     row.put("reference", a.getReference());
@@ -279,6 +283,16 @@ public class ClinicalReadController {
                     row.put("patientName", a.getPatient().getFirstName() + " "
                             + a.getPatient().getLastName());
                     row.put("ehrNumber", a.getPatient().getEhrNumber());
+                    row.put("state", workQueueService.stateOf(a, queue).name());
+                    row.put("startedAt", queue == WorkQueueService.Queue.NURSING
+                            ? a.getNursingStartedAt() : a.getHimStartedAt());
+                    row.put("completedAt", queue == WorkQueueService.Queue.NURSING
+                            ? a.getNursingCompletedAt() : a.getHimCompletedAt());
+                    row.put("exceptionReason", queue == WorkQueueService.Queue.NURSING
+                            ? a.getNursingExceptionReason() : a.getHimExceptionReason());
+                    // Promised by this endpoint's description and previously absent.
+                    row.put("vitalsRecorded",
+                            !vitalsService.forAppointment(a.getId()).isEmpty());
                     return row;
                 })
                 .toList();

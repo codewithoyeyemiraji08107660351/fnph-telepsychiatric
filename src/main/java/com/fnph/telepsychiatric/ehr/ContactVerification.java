@@ -6,6 +6,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -63,6 +64,9 @@ public class ContactVerification extends BaseEntity {
 
     @Column(name = "ip_address", length = 45)
     private String ipAddress;
+
+    @Column(name = "corroborated_date_of_birth")
+    private LocalDate corroboratedDateOfBirth;
 
     public boolean isUsable(LocalDateTime now) {
         return verifiedAt == null && invalidatedAt == null && expiresAt.isAfter(now);

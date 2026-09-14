@@ -156,6 +156,24 @@ public class Appointment extends BaseEntity {
     @Column(name = "no_show_at")
     private LocalDateTime noShowAt;
 
+    @Column(name = "nursing_started_at")
+    private LocalDateTime nursingStartedAt;
+
+    @Column(name = "nursing_exception_at")
+    private LocalDateTime nursingExceptionAt;
+
+    @Column(name = "nursing_exception_reason", length = 500)
+    private String nursingExceptionReason;
+
+    @Column(name = "him_started_at")
+    private LocalDateTime himStartedAt;
+
+    @Column(name = "him_exception_at")
+    private LocalDateTime himExceptionAt;
+
+    @Column(name = "him_exception_reason", length = 500)
+    private String himExceptionReason;
+
 
     /** Guards two patients claiming the same time concurrently. */
     @Version

@@ -4,6 +4,7 @@ import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.patient.PatientRepository;
 import com.fnph.telepsychiatric.security.CurrentUser;
+import com.fnph.telepsychiatric.security.crypto.SecretEncryptor;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
 import com.fnph.telepsychiatric.user.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -69,6 +70,7 @@ public class EhrImportService {
     private final PatientRepository patientRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final SecretEncryptor secretEncryptor;
 
     @Transactional
     public EhrVerificationImport upload(MultipartFile file, LocalDate sourceAsAt) {
@@ -275,16 +277,26 @@ public class EhrImportService {
                 }
 
                 String normalisedPhone = normalisePhone(phone);
+                String normalisedEmail = normaliseEmail(optional(row, "email"));
 
                 EhrVerificationRecord record = new EhrVerificationRecord();
                 record.setEhrNumber(ehrNumber);
                 record.setFullName(fullName);
                 record.setDateOfBirthHash(Tokens.hash(dateOfBirth.toString()));
                 record.setDateOfBirthMasked(maskDate(dateOfBirth));
+
                 if (normalisedPhone != null) {
                     record.setPhoneHash(Tokens.hash(normalisedPhone));
                     record.setPhoneMasked(maskPhone(normalisedPhone));
                 }
+
+                if (normalisedEmail != null) {
+                    record.setEmailHash(Tokens.hash(normalisedEmail));
+                    record.setEmailMasked(maskEmail(normalisedEmail));
+                    record.setEmailEncrypted(secretEncryptor.encrypt(normalisedEmail));
+                }
+
+
                 record.setClinic(optional(row, "clinic"));
                 record.setPatientStatus(optional(row, "patient_status"));
                 record.setIsActiveRecord(true);
@@ -299,6 +311,21 @@ public class EhrImportService {
         }
 
         return new ParseResult(total, records, errors);
+    }
+
+    private String normaliseEmail(String raw) {
+        if (raw == null || raw.isBlank() || !raw.contains("@") || raw.endsWith("@")) {
+            return null;
+        }
+        return raw.trim().toLowerCase();
+    }
+
+
+    private String maskEmail(String normalised) {
+        int at = normalised.indexOf('@');
+        String local = normalised.substring(0, at);
+        String shown = local.length() <= 2 ? local.substring(0, 1) : local.substring(0, 2);
+        return shown + "***" + normalised.substring(at);
     }
 
     private String value(CSVRecord row, String column) {

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: html(body=~{::body-content})}">
+<body>
+<div th:fragment="body-content">
+
+    <p style="margin:0 0 16px;">Hello <span th:text="${recipientName}">Aisha Bello</span>,</p>
+
+    <p style="margin:0 0 20px;">
+        Someone is setting up online access using your hospital record number.
+        Enter this code to confirm it is you.
+    </p>
+
+    <!--
+      The code is the content, so it is large and selectable rather than a
+      button. A patient reading this on a phone has to type it into another
+      tab, and a link would not help: there is nothing to click through to
+      until the code is entered.
+    -->
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px;">
+        <tr>
+            <td style="border-radius:6px;background:#f1f3f5;padding:16px 32px;">
+                <span th:text="${code}"
+                      style="font-size:30px;font-weight:700;letter-spacing:6px;
+                             font-family:monospace;color:#0f5132;">000000</span>
+            </td>
+        </tr>
+    </table>
+
+    <p style="margin:0 0 16px;font-size:14px;color:#6c757d;">
+        The code expires on
+        <strong th:text="${expiresAt}">7 September 2026 at 11:00</strong>.
+        After that, start again to receive a new one.
+    </p>
+
+    <!--
+      Two things this person needs if it was not them. First that ignoring it
+      is genuinely safe, because a code alone opens nothing. Second who to
+      tell, because a code arriving repeatedly means somebody has their
+      record number and is trying.
+    -->
+    <p style="margin:0 0 16px;">
+        <strong>If you did not ask for this</strong>, ignore this email. Nobody can set
+        up access with the code alone. If you receive several of these, contact the
+        hospital.
+    </p>
+
+    <p style="margin:0;font-size:14px;color:#6c757d;">
+        Never share this code. Nobody from the hospital will ask you for it by phone
+        or by message.
+    </p>
+
+</div>
+</body>
+</html>

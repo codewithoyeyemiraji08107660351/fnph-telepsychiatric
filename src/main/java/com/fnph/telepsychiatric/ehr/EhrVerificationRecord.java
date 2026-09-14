@@ -60,4 +60,7 @@ public class EhrVerificationRecord extends BaseEntity {
 
     @Column(name = "is_active_record", nullable = false)
     private Boolean isActiveRecord = true;
+
+    @Column(name = "email_encrypted", length = 512)
+    private String emailEncrypted;
 }

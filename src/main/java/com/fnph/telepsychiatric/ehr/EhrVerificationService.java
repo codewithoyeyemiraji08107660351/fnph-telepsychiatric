@@ -7,8 +7,10 @@ import com.fnph.telepsychiatric.authz.RoleRepository;
 import com.fnph.telepsychiatric.authz.UserRole;
 import com.fnph.telepsychiatric.authz.UserRoleRepository;
 import com.fnph.telepsychiatric.ehr.api.*;
+import com.fnph.telepsychiatric.email.AccountEmailService;
 import com.fnph.telepsychiatric.patient.Patient;
 import com.fnph.telepsychiatric.patient.PatientRepository;
+import com.fnph.telepsychiatric.security.crypto.SecretEncryptor;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
 import com.fnph.telepsychiatric.session.PasswordPolicy;
 import com.fnph.telepsychiatric.user.LoginType;
@@ -36,8 +38,8 @@ import java.util.Optional;
  * <ol>
  *   <li><b>Lookup.</b> EHR number plus one corroborating detail. Returns masked
  *       confirmation only.</li>
- *   <li><b>Contact verification.</b> A code to the number held in the snapshot,
- *       never to one the caller supplies.</li>
+ *   <li><b>Contact verification.</b> A code to a destination held in the
+ *       snapshot, never to one the caller supplies.</li>
  *   <li><b>Activation.</b> The patient sets a password and the account exists.</li>
  * </ol>
  *
@@ -48,11 +50,25 @@ import java.util.Optional;
  * That disclosure needs no account and no further step, which makes it the
  * likeliest attack on this system and the one worth engineering against.
  *
- * <h2>Why the code goes to the stored number</h2>
+ * <h2>Why the code goes to the stored destination</h2>
  *
- * Sending it to a number the caller supplies would mean anyone who learned an
- * EHR number and a date of birth could point the account at their own phone.
- * The snapshot decides where the code goes.
+ * Sending it somewhere the caller supplies would mean anyone who learned an EHR
+ * number and a date of birth could point the account at their own device. The
+ * snapshot decides where the code goes.
+ *
+ * <h2>Two routes, in order of preference</h2>
+ *
+ * Email first, then SMS. V21 removed the SMS requirement at FNPH's direction
+ * and made email the preferred route because the address comes from the
+ * hospital record. A record with neither goes to the assisted queue, where a
+ * coordinator reads the code to a patient standing in front of them. That is a
+ * stronger check than either channel, and it is how a patient with no email and
+ * no smartphone actually enrols.
+ *
+ * The address is stored encrypted, not in plaintext. A readable table of EHR
+ * numbers with names and contact details is a directory of who is a psychiatric
+ * patient here, which is what the hashes exist to prevent. It is decrypted at
+ * send time and never returned to a caller.
  *
  * <h2>Why failures are indistinguishable</h2>
  *
@@ -81,6 +97,8 @@ public class EhrVerificationService {
     private final UserRoleRepository userRoleRepository;
     private final PasswordEncoder passwordEncoder;
     private final PasswordPolicy passwordPolicy;
+    private final SecretEncryptor secretEncryptor;
+    private final AccountEmailService accountEmailService;
     private final AuditService auditService;
 
     @Value("${application.security.enrolment.max-lookup-failures-per-ip:10}")
@@ -149,12 +167,30 @@ public class EhrVerificationService {
             throw new EnrolmentException(GENERIC_FAILURE);
         }
 
-        if (snapshot.getPhoneHash() == null) {
-            // Nothing to send a code to. Route to the exception queue rather
-            // than letting the caller nominate a destination.
+        // Route, in V21's stated order of preference. Neither branch lets the
+        // caller nominate a destination.
+        ContactChannel channel;
+        String destinationMasked;
+        String deliveryRoute;
+        String sendTo = null;
+
+        if (snapshot.getEmailEncrypted() != null) {
+            channel = ContactChannel.EMAIL;
+            destinationMasked = snapshot.getEmailMasked();
+            deliveryRoute = "EMAIL";
+            sendTo = secretEncryptor.decrypt(snapshot.getEmailEncrypted());
+        } else if (snapshot.getPhoneHash() != null) {
+            channel = ContactChannel.SMS;
+            destinationMasked = snapshot.getPhoneMasked();
+            deliveryRoute = "SMS";
+        } else {
+            // Nothing on file. The assisted queue is the answer rather than a
+            // destination the caller supplies. A patient enrolling remotely
+            // with no contact details cannot self-enrol, and that is correct:
+            // there is no way to prove the device is theirs.
             throw new EnrolmentException(
-                    "We have no phone number on file for this record. Please request help below "
-                            + "so the hospital can verify you directly.");
+                    "We have no contact details on file for this record. Please request help "
+                            + "below so the hospital can verify you directly.");
         }
 
         record(ehrNumber, LookupOutcome.MATCHED, ipAddress, userAgent);
@@ -164,25 +200,36 @@ public class EhrVerificationService {
 
         ContactVerification verification = new ContactVerification();
         verification.setEhrNumber(ehrNumber);
-        verification.setChannel(ContactChannel.SMS);
-        verification.setDestinationMasked(snapshot.getPhoneMasked());
+        verification.setChannel(channel);
+        // Set explicitly. V21 added this column so a support call can be
+        // answered with where the code actually went. It defaulted to "EMAIL"
+        // and nothing ever wrote it, so every row claimed email regardless of
+        // what happened.
+        verification.setDeliveryRoute(deliveryRoute);
+        verification.setDestinationMasked(destinationMasked);
         verification.setCodeHash(Tokens.hash(code));
         verification.setExpiresAt(LocalDateTime.now().plusMinutes(codeMinutes));
         verification.setIpAddress(ipAddress);
+        // Carried so activation does not have to invent one. See activate().
+        verification.setCorroboratedDateOfBirth(request.dateOfBirth());
         ContactVerification saved = contactRepository.save(verification);
 
-        // TODO(notifications): dispatch by SMS once a provider is chosen. Until
-        // then the code is logged at info so the pilot can proceed. This must
-        // not survive into production; a code in a log is a code anyone with
-        // log access can use.
-        log.info("Enrolment code for {} (send to {}): {}",
-                ehrNumber, snapshot.getPhoneMasked(), code);
+        if (channel == ContactChannel.EMAIL) {
+            accountEmailService.sendEnrolmentCode(
+                    sendTo, snapshot.getFullName(), code, verification.getExpiresAt());
+        } else {
+            // TODO(notifications): dispatch by SMS once a provider is chosen.
+            // Must not survive into production; a code in a log is a code
+            // anyone with log access can use.
+            log.info("Enrolment code for {} (send to {}): {}",
+                    ehrNumber, destinationMasked, code);
+        }
 
         return new EnrolmentLookupResponse(
                 saved.getPublicId(),
                 snapshot.getFullName(),
                 snapshot.getDateOfBirthMasked(),
-                snapshot.getPhoneMasked(),
+                destinationMasked,
                 snapshot.getClinic(),
                 verification.getExpiresAt(),
                 active.get().getSourceAsAt(),
@@ -195,10 +242,14 @@ public class EhrVerificationService {
      * Either alone plus the EHR number is enough. Requiring both would push
      * legitimate patients into the exception queue over a phone number the
      * hospital recorded years ago, and the number is the weaker factor anyway.
+     *
+     * A record carrying an email and no phone leaves date of birth as the only
+     * option, which is the stronger factor and therefore not a loss.
      */
     private boolean corroborates(EhrVerificationRecord snapshot, EnrolmentLookupRequest request) {
         if (request.dateOfBirth() != null) {
-            return Tokens.hash(request.dateOfBirth().toString()).equals(snapshot.getDateOfBirthHash());
+            return Tokens.hash(request.dateOfBirth().toString())
+                    .equals(snapshot.getDateOfBirthHash());
         }
         if (request.phoneLastFour() != null && snapshot.getPhoneMasked() != null) {
             String stored = snapshot.getPhoneMasked();
@@ -256,11 +307,7 @@ public class EhrVerificationService {
         patient.setEhrNumber(snapshot.getEhrNumber());
         patient.setFirstName(nameParts[0]);
         patient.setLastName(nameParts.length > 1 ? nameParts[1] : nameParts[0]);
-        // Reconstructed from the year in the mask. The full date is never
-        // stored in the snapshot, and the account does not need it: eligibility
-        // and identity were both settled at lookup.
-        patient.setDateOfBirth(LocalDate.of(
-                Integer.parseInt(snapshot.getDateOfBirthMasked().substring(6)), 1, 1));
+        patient.setDateOfBirth(dateOfBirthFor(verification, snapshot));
         patient.setSourceImportId(active.getId());
         patient.setIsEligible(true);
         patient.setIsPhysicallyAssessed(true);
@@ -316,6 +363,32 @@ public class EhrVerificationService {
 
         log.info("Patient {} enrolled against snapshot {}",
                 savedPatient.getPublicId(), active.getPublicId());
+    }
+
+    /**
+     * The patient's real date of birth where it is known.
+     *
+     * The snapshot holds only a hash and a masked year, so it cannot supply
+     * one. Where the patient corroborated with a date of birth, that date was
+     * matched against the hash at lookup and carried on the verification, so it
+     * is both correct and already proved.
+     *
+     * Where they corroborated with the last four digits of the phone instead,
+     * there is no date, and the year from the mask with 1 January is a
+     * placeholder. A fabricated date that looks real is worse than one that
+     * does not, so it is logged: a clinical record showing 1 January should be
+     * recognisable as unknown rather than believed.
+     */
+    private LocalDate dateOfBirthFor(ContactVerification verification,
+                                     EhrVerificationRecord snapshot) {
+        if (verification.getCorroboratedDateOfBirth() != null) {
+            return verification.getCorroboratedDateOfBirth();
+        }
+        int year = Integer.parseInt(snapshot.getDateOfBirthMasked().substring(6));
+        log.warn("Patient {} enrolled by phone corroboration. Date of birth recorded as "
+                        + "1 January {} and is not the real date. Confirm it at first contact.",
+                snapshot.getEhrNumber(), year);
+        return LocalDate.of(year, 1, 1);
     }
 
     // -----------------------------------------------------------------

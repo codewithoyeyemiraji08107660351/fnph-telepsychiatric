@@ -3,7 +3,6 @@ package com.fnph.telepsychiatric.appointment;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-
 import java.util.List;
 import java.util.Optional;
 
@@ -30,6 +29,8 @@ public interface CentreAppointmentRepository extends JpaRepository<CentreAppoint
 
     Optional<CentreAppointment> findByPublicId(String publicId);
 
+    Optional<CentreAppointment> findByCentreIdAndPublicId(Long centreId, String publicId);
+
     Optional<CentreAppointment> findByReference(String reference);
 
     Optional<CentreAppointment> findBySlotId(Long slotId);
@@ -46,4 +47,6 @@ public interface CentreAppointmentRepository extends JpaRepository<CentreAppoint
     List<CentreAppointment> findAllByCentrePatientIdOrderByAppointmentDateDesc(Long centrePatientId);
 
     long countByStatus(Status status);
+
+
 }

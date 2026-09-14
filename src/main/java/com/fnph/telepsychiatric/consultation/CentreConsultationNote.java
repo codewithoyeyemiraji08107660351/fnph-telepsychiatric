@@ -52,6 +52,29 @@ public class CentreConsultationNote extends BaseEntity implements TenantOwned {
     private String followUpTimeline;
 
     /**
+     * Version and supersession, matching ConsultationNote.
+     *
+     * The columns were added by V14 for both note tables and mapped on only
+     * one. Module 3 makes the centre note the authoritative clinical record, so
+     * the pathway that most needs an amendment trail was the one without it.
+     */
+    @Column(name = "version", nullable = false)
+    private Integer version = 1;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "supersedes_id")
+    private CentreConsultationNote supersedes;
+
+    @Column(name = "superseded_at")
+    private LocalDateTime supersededAt;
+
+    @Column(name = "amendment_reason", length = 500)
+    private String amendmentReason;
+
+    @Column(name = "supersedes_id")
+    private int supersedesId;
+
+    /**
      * Tenant key for isolation enforcement. Null means this row belongs to the
      * FNPH pathway rather than to a centre.
      */

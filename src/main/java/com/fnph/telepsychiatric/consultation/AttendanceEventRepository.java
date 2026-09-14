@@ -13,4 +13,12 @@ public interface AttendanceEventRepository extends JpaRepository<AttendanceEvent
 
     boolean existsByConsultationIdAndParticipantRoleAndEventType(
             Long consultationId, ParticipantRole role, AttendanceEventType eventType);
+
+    /**
+     * Whether a participant ever joined. The centre pathway has no
+     * centreJoinedAt column, so attendance is the record, which is also the
+     * append-only evidence a disputed no-show is settled from.
+     */
+    boolean existsByCentreConsultationIdAndParticipantRoleAndEventType(
+            Long centreConsultationId, ParticipantRole role, AttendanceEventType eventType);
 }

@@ -184,6 +184,8 @@ public class AccountEmailService {
         }
     }
 
+
+
     /**
      * Logs must not become a directory of who holds an account here.
      */
@@ -196,6 +198,24 @@ public class AccountEmailService {
             return "***";
         }
         return address.charAt(0) + "***" + address.substring(at);
+    }
+
+    /**
+     * Sends an enrolment code.
+     *
+     * Deliberately carries no clinical content and does not name the service in
+     * the subject beyond the hospital. An email arriving on a shared family
+     * account should not announce that the recipient is a psychiatric patient.
+     */
+    @Async
+    public void sendEnrolmentCode(String toAddress, String recipientName,
+                                  String code, LocalDateTime expiresAt) {
+        Context context = baseContext();
+        context.setVariable("recipientName", recipientName);
+        context.setVariable("code", code);
+        context.setVariable("expiresAt", expiresAt.format(STAMP));
+
+        send(toAddress, "Your FNPH Kaduna verification code", "email/enrolment-code", context);
     }
 
 }

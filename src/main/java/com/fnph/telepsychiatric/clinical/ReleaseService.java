@@ -1,6 +1,7 @@
 package com.fnph.telepsychiatric.clinical;
 
 import com.fnph.telepsychiatric.appointment.Appointment;
+import com.fnph.telepsychiatric.appointment.CentreAppointment;
 import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.notification.InAppNotificationService;
@@ -313,5 +314,33 @@ public class ReleaseService {
     @Transactional(readOnly = true)
     public List<ReleaseBundleComponent> componentsOf(Long bundleId) {
         return componentRepository.findAllByBundleId(bundleId);
+    }
+
+    /**
+     * Opens a bundle for a centre appointment.
+     *
+     * Same component set and the same completeness rule. Only the anchor
+     * differs, and release already handles both: line 210 routes a bundle with
+     * a centre appointment through centreDelivery.
+     */
+    @Transactional
+    public ReleaseBundle openFor(CentreAppointment appointment) {
+        return bundleRepository.findByCentreAppointmentId(appointment.getId())
+                .orElseGet(() -> {
+                    ReleaseBundle bundle = new ReleaseBundle();
+                    bundle.setCentreAppointment(appointment);
+                    bundle.setCentre(appointment.getCentre());
+                    bundle.setStatus(BundleStatus.INCOMPLETE);
+                    ReleaseBundle saved = bundleRepository.save(bundle);
+
+                    Arrays.stream(ComponentType.values()).forEach(type -> {
+                        ReleaseBundleComponent component = new ReleaseBundleComponent();
+                        component.setBundle(saved);
+                        component.setComponentType(type);
+                        component.setIsRequired(type == ComponentType.CLINICAL_NOTE);
+                        componentRepository.save(component);
+                    });
+                    return saved;
+                });
     }
 }

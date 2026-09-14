@@ -16,6 +16,20 @@ public interface ParticipantTokenRepository extends JpaRepository<ParticipantTok
             Long consultationId, ParticipantRole role);
 
     /**
+     * Centre twin of {@link #revokeAllForConsultation}. Needed because the two
+     * pathways hold their tokens on different associations, and a terminated
+     * centre session must kill its tokens for the same reason.
+     */
+    @Modifying
+    @Query("""
+           update ParticipantToken t set t.revokedAt = :now, t.revokedReason = :reason
+           where t.centreConsultation.id = :centreConsultationId and t.revokedAt is null
+           """)
+    int revokeAllForCentreConsultation(@Param("centreConsultationId") Long centreConsultationId,
+                                       @Param("now") LocalDateTime now,
+                                       @Param("reason") String reason);
+
+    /**
      * Kills every token for a session.
      *
      * Called when a clinician terminates. Without it, a participant ejected for
