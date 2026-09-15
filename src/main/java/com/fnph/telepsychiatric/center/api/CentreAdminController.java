@@ -195,6 +195,56 @@ public class CentreAdminController {
         return ResponseEntity.ok(Map.of("updated", true));
     }
 
+    @GetMapping("/admin/centres")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_READ)")
+    @Operation(
+            summary = "All centres",
+            description = """
+                    Every centre, active or not, ordered by name.
+
+                    **Includes `SETUP` and `SUSPENDED` deliberately.** A centre in setup
+                    is exactly the one an administrator is about to invite staff for, and
+                    a suspended one is the one they are investigating. A list of only
+                    active centres would hide both of the cases this endpoint exists to
+                    serve.
+
+                    Soft-deleted centres are excluded. A deleted centre is not a
+                    selectable destination for anything.
+
+                    **No wallet balance and no patient counts.** Those belong to the
+                    Finance and centre-report surfaces, which are separately permissioned.
+                    This is a picker and a status list, so it carries only what is needed
+                    to choose a centre and see whether it can be used.
+
+                    **Requires** `centre.read`, held by the Central Administrator, the Hub
+                    Coordinator and Finance. A centre role does not hold it: a centre sees
+                    itself through `/centres/me` and has no business enumerating the other
+                    22.
+                    """)
+    @ApiResponse(responseCode = "200", description = "Centres returned, ordered by name.")
+    public ResponseEntity<List<Map<String, Object>>> listCentres(
+            @Parameter(description = "Limit to one status. Omit for all of them.",
+                    example = "ACTIVE")
+            @RequestParam(required = false) CentreStatus status) {
+
+        return ResponseEntity.ok(centreRepository.findAllByDeletedFalseOrderByNameAsc().stream()
+                .filter(centre -> status == null || centre.getStatus() == status)
+                .map(centre -> {
+                    Map<String, Object> row = new java.util.LinkedHashMap<>();
+                    row.put("publicId", centre.getPublicId());
+                    row.put("code", centre.getCode());
+                    row.put("name", centre.getName());
+                    row.put("lga", centre.getLga());
+                    row.put("state", centre.getState());
+                    row.put("status", centre.getStatus().name());
+                    row.put("isActive", Boolean.TRUE.equals(centre.getIsActive()));
+                    row.put("canReceiveReferrals", centre.getStatus() == CentreStatus.ACTIVE);
+                    row.put("suspendReason", centre.getSuspendReason());
+                    return row;
+                })
+                .toList());
+    }
+
     @GetMapping("/centres/me")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_READ_OWN)")
     @Operation(

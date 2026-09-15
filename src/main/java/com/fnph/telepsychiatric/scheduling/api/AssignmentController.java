@@ -160,6 +160,8 @@ public class AssignmentController {
                 appointment.getDoctor() != null && appointment.getAssignedRoom() != null));
     }
 
+
+
     @PostMapping("/confirm")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_APPROVE)")
     @Operation(

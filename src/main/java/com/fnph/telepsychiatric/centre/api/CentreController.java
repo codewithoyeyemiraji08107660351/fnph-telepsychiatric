@@ -148,6 +148,30 @@ public class CentreController {
                 .stream().map(this::toResponse).toList());
     }
 
+    @GetMapping("/treated")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_BUNDLE_READ)")
+    @Operation(
+            summary = "Bundles this centre has treated",
+            description = """
+                    Care bundles this centre has already acted on, most recent first, with
+                    the notes recorded at the time.
+
+                    **The service method existed and nothing called it.** A centre could
+                    mark a bundle treated and then had no way to see what it had treated,
+                    so the notes required at that moment went somewhere nobody could read.
+                    This is the centre's record of care given, and it is the answer when
+                    FNPH asks what was done.
+
+                    Centre-scoped: `treatedHistory()` resolves the calling centre and
+                    cannot reach another's receipts.
+
+                    **Requires** `centre_bundle.read`.
+                    """)
+    public ResponseEntity<List<Map<String, Object>>> treated() {
+        return ResponseEntity.ok(referralService.treatedHistory().stream()
+                .map(this::toQueueItem).toList());
+    }
+
     @GetMapping("/incoming")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_BUNDLE_READ)")
     @Operation(

@@ -24,7 +24,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/hub/approvals")
@@ -66,6 +68,73 @@ public class ApprovalController {
         return ResponseEntity.ok(new ScheduleDtos.QueueResponse(
                 appointmentRepository.countByStatus(Status.AWAITING_APPROVAL),
                 results.map(this::toResponse).getContent()));
+    }
+
+    /** The four multidisciplinary team roles, and nothing else. */
+    private static final List<String> ASSIGNABLE_ROLES =
+            List.of("NURSING", "PHARMACIST", "LABORATORY_TECHNICIAN", "HIM");
+
+    @GetMapping("/assignable-staff")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_ASSIGN_TEAM)")
+    @Operation(
+            summary = "Staff assignable to a consultation team",
+            description = """
+                    Active hospital staff holding one of the four team roles, with the role
+                    each holds, so the Hub Coordinator can name a team when approving.
+
+                    **Gated on `appointment.assign_team`, not `user.read`.** The coordinator
+                    has to name a nurse and a pharmacist to approve an appointment and does
+                    not hold `user.read`, which would hand them the whole account
+                    administration surface to fill four dropdowns. This returns a name and
+                    role codes: no email, no account status, no sign-in history.
+
+                    Centre staff are excluded by construction. A centre pharmacist holds
+                    `CENTRE_PHARMACY`, not `PHARMACIST`, so querying the four FNPH role
+                    codes cannot reach them. An FNPH consultation team is drawn from the
+                    hospital.
+
+                    **Requires** `appointment.assign_team`.
+                    """)
+    @ApiResponse(responseCode = "200", description = "Assignable staff, ordered by name.")
+    public ResponseEntity<List<Map<String, Object>>> assignableStaff(
+            @Parameter(description = "Limit to one of the four team role codes. Omit for all.",
+                    example = "PHARMACIST")
+            @RequestParam(required = false) String role) {
+
+        List<String> wanted = role == null ? ASSIGNABLE_ROLES
+                : ASSIGNABLE_ROLES.stream().filter(role::equals).toList();
+
+        // Keyed by public id, because one person can legitimately hold two of
+        // these roles and must appear once with both rather than twice.
+        Map<String, Map<String, Object>> byPublicId = new java.util.LinkedHashMap<>();
+
+        for (String roleCode : wanted) {
+            for (Users user : userRepository.findActiveByRoleCode(roleCode)) {
+                // Belt and braces. The role codes above are FNPH-scoped so a
+                // centre account should not match, and a mis-assigned one must
+                // not end up on a hospital consultation team either way.
+                if (user.getCentre() != null) {
+                    continue;
+                }
+                Map<String, Object> row = byPublicId.computeIfAbsent(
+                        user.getPublicId(), key -> {
+                            Map<String, Object> fresh = new java.util.LinkedHashMap<>();
+                            fresh.put("publicId", user.getPublicId());
+                            fresh.put("fullName", user.getFullName());
+                            fresh.put("roles", new java.util.ArrayList<String>());
+                            return fresh;
+                        });
+                @SuppressWarnings("unchecked")
+                List<String> roles = (List<String>) row.get("roles");
+                if (!roles.contains(roleCode)) {
+                    roles.add(roleCode);
+                }
+            }
+        }
+
+        return ResponseEntity.ok(byPublicId.values().stream()
+                .sorted(Comparator.comparing(r -> String.valueOf(r.get("fullName"))))
+                .toList());
     }
 
     @PostMapping("/{appointmentPublicId}/approve")
