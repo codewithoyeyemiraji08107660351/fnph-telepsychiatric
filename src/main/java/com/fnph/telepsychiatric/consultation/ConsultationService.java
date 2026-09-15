@@ -9,8 +9,6 @@ import com.fnph.telepsychiatric.configuration.ConfigurationKeys;
 import com.fnph.telepsychiatric.configuration.ConfigurationService;
 import com.fnph.telepsychiatric.consultation.video.DailyProperties;
 import com.fnph.telepsychiatric.consultation.video.VideoProvider;
-import com.fnph.telepsychiatric.notification.InAppNotificationService;
-import com.fnph.telepsychiatric.notification.NotificationType;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +48,13 @@ import java.util.List;
  * emergency, acute clinical unsuitability, unsafe connectivity. Each records a
  * reason and a safety action, and an emergency surfaces the approved
  * escalation instruction rather than leaving the clinician to remember it.
+ *
+ * <h2>Where the clock lives</h2>
+ *
+ * The database half of the clock is {@link ConsultationClockSteps}. It is a
+ * separate bean so its transactions are real: a @Transactional method called
+ * from inside this class would bypass Spring's proxy and run with no
+ * transaction at all.
  */
 @Service
 @RequiredArgsConstructor
@@ -64,8 +69,8 @@ public class ConsultationService {
     private final VideoProvider videoProvider;
     private final DailyProperties videoProperties;
     private final ConfigurationService configuration;
-    private final InAppNotificationService notifications;
     private final AuditService auditService;
+    private final ConsultationClockSteps clockSteps;
 
     // -----------------------------------------------------------------
     // Room lifecycle
@@ -115,7 +120,8 @@ public class ConsultationService {
         consultation.setRoomCreatedAt(LocalDateTime.now());
 
         Consultation saved = consultationRepository.save(consultation);
-        log.info("Video room {} created for appointment {}", room.name(), appointment.getReference());
+        log.info("Video room {} created for appointment {}",
+                room.name(), appointment.getReference());
         return saved;
     }
 
@@ -176,7 +182,8 @@ public class ConsultationService {
                 // could end it for the doctor.
                 role == ParticipantRole.DOCTOR,
                 opensAt,
-                appointment.getScheduledEndAt().plusMinutes(videoProperties.getRoomGraceMinutes()));
+                appointment.getScheduledEndAt()
+                        .plusMinutes(videoProperties.getRoomGraceMinutes()));
 
         ParticipantToken token = new ParticipantToken();
         token.setConsultation(consultation);
@@ -242,81 +249,74 @@ public class ConsultationService {
     // -----------------------------------------------------------------
 
     /**
-     * Sends countdown warnings and ends sessions that have run to their slot
-     * end. Run every 30 seconds.
+     * Sends countdown warnings, ends sessions that have run to their slot end,
+     * and sweeps rooms left open past their expiry. Run every 30 seconds.
      *
      * Two warnings, both configured, because the source documents disagree
      * about whether there is one at fifteen or one at ten. There are two.
+     *
+     * <h2>Not @Transactional, deliberately</h2>
+     *
+     * The database work happens in one short transaction inside
+     * {@link ConsultationClockSteps}. Deleting a room at Daily happens here,
+     * afterwards, holding no connection: its read timeout is twenty seconds,
+     * and a dozen expired rooms inside a transaction would hold one connection
+     * of twenty for four minutes. The symptom would be the whole application
+     * stalling with a scheduled job as the cause and nothing in the request
+     * logs pointing at it.
+     *
+     * This method also used to be one transaction for the whole pass with no
+     * error handling around the provider call, so a single Daily failure threw
+     * out of the loop and rolled back every counter and warning flag set before
+     * it. The clock then made no progress for as long as the outage lasted:
+     * nothing closed, and the same work was attempted and discarded on every
+     * subsequent tick.
+     *
+     * @return how many consultations were closed
      */
-    @Transactional
     public int tick() {
         LocalDateTime now = LocalDateTime.now();
         int warnOne = configuration.getInt(ConfigurationKeys.WARNING_ONE_MINUTES_REMAINING);
         int warnTwo = configuration.getInt(ConfigurationKeys.WARNING_TWO_MINUTES_REMAINING);
 
-        List<Consultation> running = consultationRepository.findRunning(now);
-        int ended = 0;
+        var result = clockSteps.advanceRunning(now, warnOne, warnTwo);
 
-        for (Consultation consultation : running) {
-            long remaining = Duration.between(now, consultation.getScheduledEndAt()).getSeconds();
-            consultation.setRemainingSeconds((int) Math.max(0, remaining));
+        // Rooms from consultations just closed, plus any left open from an
+        // earlier pass where the provider was unreachable.
+        deleteRooms(result.roomsToDelete());
+        deleteRooms(clockSteps.expiredRooms(now));
 
-            if (remaining <= 0) {
-                closeAtSlotEnd(consultation);
-                ended++;
-                continue;
-            }
-            long minutesLeft = remaining / 60;
-
-            if (minutesLeft <= warnOne && consultation.getWarningOneSentAt() == null) {
-                consultation.setWarningOneSentAt(now);
-                warn(consultation, warnOne);
-            }
-            if (minutesLeft <= warnTwo && consultation.getWarningTwoSentAt() == null) {
-                consultation.setWarningTwoSentAt(now);
-                warn(consultation, warnTwo);
-            }
-            consultationRepository.save(consultation);
-        }
-        return ended;
+        return result.ended();
     }
 
-    private void warn(Consultation consultation, int minutes) {
-        recordAttendance(consultation, ParticipantRole.DOCTOR,
-                AttendanceEventType.WARNING_SENT, null,
-                "%d minutes remaining".formatted(minutes));
-
-        if (consultation.getDoctor() != null) {
-            notifications.notifyUser(consultation.getDoctor(),
-                    NotificationType.CONSULTATION_READY,
-                    "%d minutes remaining".formatted(minutes),
-                    "This consultation ends at its scheduled time.",
-                    "/clinical/consultations/" + consultation.getPublicId(),
-                    "Consultation", consultation.getId());
-        }
+    /**
+     * Deletes rooms left open past their expiry.
+     *
+     * tick() already does this, so this exists only for a separate schedule if
+     * FNPH wants one. Running both against the same rows means two concurrent
+     * deletes of one room, which is harmless but pointless; pick one.
+     */
+    public int closeExpiredRooms() {
+        var rooms = clockSteps.expiredRooms(LocalDateTime.now());
+        deleteRooms(rooms);
+        return rooms.size();
     }
 
-    private void closeAtSlotEnd(Consultation consultation) {
-        LocalDateTime now = LocalDateTime.now();
-        consultation.setEndedAt(now);
-        consultation.setOutcome(consultation.getPatientJoinedAt() == null
-                ? Outcome.NO_SHOW : Outcome.COMPLETED);
-        consultationRepository.save(consultation);
-
-        closeRoom(consultation, "Slot end reached");
-
-        Appointment appointment = consultation.getAppointment();
-        if (appointment != null) {
-            appointment.setStatus(consultation.getPatientJoinedAt() == null
-                    ? Status.NO_SHOW : Status.COMPLETED);
-            if (consultation.getPatientJoinedAt() == null) {
-                appointment.setNoShowAt(now);
-                appointment.setNoShowReason("Patient did not join before the session ended");
+    /** The network half. Runs with no transaction open. */
+    private void deleteRooms(List<ConsultationClockSteps.RoomRef> rooms) {
+        for (var room : rooms) {
+            try {
+                videoProvider.deleteRoom(room.roomName());
+                clockSteps.markRoomDeleted(room.consultationId(), room.why());
+            } catch (RuntimeException e) {
+                // One consultation's provider failure must not stop the sweep
+                // for the others. This is the isolation the old single
+                // transaction did not have: closeRoom had no try/catch at all,
+                // so the first failure ended the pass.
+                log.error("Could not delete room {} ({}). Room may still exist at "
+                        + "the provider.", room.roomName(), room.why(), e);
             }
-            appointmentRepository.save(appointment);
         }
-        log.info("Consultation {} closed at slot end, outcome {}",
-                consultation.getPublicId(), consultation.getOutcome());
     }
 
     // -----------------------------------------------------------------
@@ -357,12 +357,16 @@ public class ConsultationService {
             consultation.setEscalationInstruction(
                     "This service is not for emergencies. Direct the patient to the nearest "
                             + "emergency department, or call "
-                            + configuration.getString(ConfigurationKeys.CLINICAL_EMERGENCY_NUMBER) + ".");
+                            + configuration.getString(ConfigurationKeys.CLINICAL_EMERGENCY_NUMBER)
+                            + ".");
         }
         consultationRepository.save(consultation);
 
-        // Kills every token. Without this, a participant ejected for abuse or a
-        // privacy breach rejoins with the token they already hold.
+        // Kills every token, and before the room call. Without this, a
+        // participant ejected for abuse or a privacy breach rejoins with the
+        // token they already hold. Doing it first is also what makes it safe to
+        // let this transaction stand if the provider is unreachable: the
+        // credential is dead even though the room still exists.
         tokenRepository.revokeAllForConsultation(consultation.getId(), now,
                 "Session terminated: " + reason);
 
@@ -390,7 +394,8 @@ public class ConsultationService {
 
     /** Falls back from video to audio. Video is standard; audio is approved. */
     @Transactional
-    public Consultation switchModality(String consultationPublicId, Modality modality, String reason) {
+    public Consultation switchModality(String consultationPublicId, Modality modality,
+                                       String reason) {
         Consultation consultation = consultationRepository.findByPublicId(consultationPublicId)
                 .orElseThrow(() -> new ConsultationException("No such consultation"));
 
@@ -445,23 +450,38 @@ public class ConsultationService {
         return attendanceRepository.findAllByConsultationIdOrderByOccurredAtAsc(consultationId);
     }
 
-    /** Deletes rooms left open past their expiry. Run on a schedule. */
-    @Transactional
-    public int closeExpiredRooms() {
-        List<Consultation> stale = consultationRepository.findRoomsToClose(LocalDateTime.now());
-        stale.forEach(c -> closeRoom(c, "Room expiry reached"));
-        return stale.size();
-    }
-
+    /**
+     * Deletes the room at the provider. An undeleted room is a way back in.
+     *
+     * Used by {@link #terminate}, which is transactional, so this one call does
+     * happen inside a transaction. It is a single deletion rather than a sweep,
+     * and a clinician ending a session is already waiting on the response, so
+     * the cost is one connection for one call rather than a pool held through a
+     * batch.
+     *
+     * The try/catch is new. Without it a provider failure threw out of
+     * terminate() and rolled the whole termination back, which left the session
+     * open with its tokens un-revoked: a clinician ending a call for abuse
+     * would see an error and the participant would still be in the room.
+     */
     private void closeRoom(Consultation consultation, String reason) {
         if (consultation.getRoomName() == null || consultation.getRoomDeletedAt() != null) {
             return;
         }
-        videoProvider.deleteRoom(consultation.getRoomName());
-        consultation.setRoomDeletedAt(LocalDateTime.now());
-        consultationRepository.save(consultation);
-        recordAttendance(consultation, ParticipantRole.DOCTOR,
-                AttendanceEventType.ROOM_CLOSED, null, reason);
+        try {
+            videoProvider.deleteRoom(consultation.getRoomName());
+            consultation.setRoomDeletedAt(LocalDateTime.now());
+            consultationRepository.save(consultation);
+            recordAttendance(consultation, ParticipantRole.DOCTOR,
+                    AttendanceEventType.ROOM_CLOSED, null, reason);
+        } catch (RuntimeException e) {
+            // Visible, not swallowed: an undeleted room with a live token is a
+            // clinical call anyone holding the link can walk into. The tokens
+            // are already revoked by the caller, and roomDeletedAt stays null,
+            // so the next sweep retries the deletion.
+            log.error("Could not delete room {} ({}). Room may still exist at provider.",
+                    consultation.getRoomName(), reason, e);
+        }
     }
 
     private void recordAttendance(Consultation consultation, ParticipantRole role,

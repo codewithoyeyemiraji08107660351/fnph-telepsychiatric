@@ -9,8 +9,6 @@ import com.fnph.telepsychiatric.configuration.ConfigurationKeys;
 import com.fnph.telepsychiatric.configuration.ConfigurationService;
 import com.fnph.telepsychiatric.consultation.video.DailyProperties;
 import com.fnph.telepsychiatric.consultation.video.VideoProvider;
-import com.fnph.telepsychiatric.notification.InAppNotificationService;
-import com.fnph.telepsychiatric.notification.NotificationType;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
 import com.fnph.telepsychiatric.tenancy.TenantContext;
 import jakarta.persistence.EntityNotFoundException;
@@ -21,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * The centre consultation lifecycle.
@@ -39,6 +38,13 @@ import java.time.LocalDateTime;
  * a patient who misses the window is told to rebook. Here the centre is
  * responsible for having the patient in the room, so the cutoff lands on the
  * CENTRE role.
+ *
+ * <h2>Where the clock lives</h2>
+ *
+ * The database half of the clock is {@link CentreConsultationClockSteps}. It is
+ * a separate bean so its transactions are real: a @Transactional method called
+ * from inside this class would bypass Spring's proxy and run with no
+ * transaction at all.
  */
 @Service
 @RequiredArgsConstructor
@@ -52,8 +58,8 @@ public class CentreConsultationService {
     private final VideoProvider videoProvider;
     private final DailyProperties videoProperties;
     private final ConfigurationService configuration;
-    private final InAppNotificationService notifications;
     private final AuditService auditService;
+    private final ConsultationClockSteps clockSteps;
 
     // -----------------------------------------------------------------
     // Room
@@ -246,108 +252,72 @@ public class CentreConsultationService {
         attendanceRepository.save(event);
     }
 
+    // -----------------------------------------------------------------
+    // The clock
+    // -----------------------------------------------------------------
 
     /**
-     * Countdown warnings and close at slot end. Run every 30 seconds.
+     * The centre consultation clock. Warns, closes at the scheduled end, and
+     * sweeps rooms left open past their grace period.
      *
-     * Module 3 fixes the slot and requires the 15-minute warning. Both warning
-     * thresholds are shared with the FNPH pathway because they are clinical
-     * timings, not pathway timings.
+     * <h2>Not @Transactional, deliberately</h2>
+     *
+     * The database work happens in one short transaction inside
+     * {@link CentreConsultationClockSteps}. Deleting a room at Daily happens
+     * here, afterwards, holding no connection: its read timeout is twenty
+     * seconds, and a dozen expired rooms inside a transaction would hold one of
+     * twenty for four minutes. The symptom would be the whole application
+     * stalling with a scheduled job as the cause and nothing in the request
+     * logs pointing at it.
+     *
+     * The warnings stay in that transaction because they are in-app rows rather
+     * than messages, so the flag and the notice it records cannot disagree.
+     *
+     * @return how many consultations were closed
      */
-    @Transactional
     public int tick() {
         LocalDateTime now = LocalDateTime.now();
         int warnOne = configuration.getInt(ConfigurationKeys.WARNING_ONE_MINUTES_REMAINING);
         int warnTwo = configuration.getInt(ConfigurationKeys.WARNING_TWO_MINUTES_REMAINING);
 
-        int ended = 0;
-        for (CentreConsultation consultation : consultationRepository.findRunning(now)) {
-            long remaining = Duration.between(now, consultation.getScheduledEndAt()).getSeconds();
-            consultation.setRemainingSeconds((int) Math.max(0, remaining));
+        var result = clockSteps.advanceRunning(now, warnOne, warnTwo);
 
-            if (remaining <= 0) {
-                closeAtSlotEnd(consultation);
-                ended++;
-                continue;
-            }
-            long minutesLeft = remaining / 60;
+        // Rooms from consultations just closed, plus any left open from an
+        // earlier pass where the provider was unreachable.
+        deleteRooms(result.roomsToDelete());
+        deleteRooms(clockSteps.expiredRooms(now));
 
-            if (minutesLeft <= warnOne && consultation.getWarningOneSentAt() == null) {
-                consultation.setWarningOneSentAt(now);
-                warn(consultation, warnOne);
+        return result.ended();
+    }
+
+    /** The network half. Runs with no transaction open. */
+    private void deleteRooms(List<ConsultationClockSteps.RoomRef> rooms) {
+        for (var room : rooms) {
+            try {
+                videoProvider.deleteRoom(room.roomName());
+                clockSteps.markRoomDeleted(room.consultationId(), room.why());
+            } catch (RuntimeException e) {
+                // One centre's provider failure must not stop the sweep for the
+                // other twenty-two. The consultation is already closed in the
+                // database; the undeleted room is the separate and serious
+                // problem, because a live token on an existing room is a
+                // clinical call anyone holding the link can walk into. It is
+                // retried on the next tick by expiredRooms().
+                log.error("Could not delete centre room {} ({}). Room may still exist "
+                        + "at the provider.", room.roomName(), room.why(), e);
             }
-            if (minutesLeft <= warnTwo && consultation.getWarningTwoSentAt() == null) {
-                consultation.setWarningTwoSentAt(now);
-                warn(consultation, warnTwo);
-            }
-            consultationRepository.save(consultation);
         }
-        return ended;
     }
 
     /**
-     * Both ends are warned here, unlike the FNPH pathway.
+     * Deletes the room at the provider. An undeleted room is a way back in.
      *
-     * On the FNPH pathway only the clinician is notified; the patient sees the
-     * countdown in the browser. The centre coordinator is running the room with
-     * the patient in it, so they need the same warning the clinician gets.
+     * Still used by {@link #terminate}, which is transactional, so this one
+     * call does happen inside a transaction. It is a single deletion rather
+     * than a sweep, and a clinician ending a session is already waiting on the
+     * response, so the cost is one connection for one call rather than a pool
+     * held through a batch.
      */
-    private void warn(CentreConsultation consultation, int minutes) {
-        recordAttendance(consultation, ParticipantRole.DOCTOR,
-                AttendanceEventType.WARNING_SENT, null,
-                "%d minutes remaining".formatted(minutes));
-
-        String subject = "%d minutes remaining".formatted(minutes);
-        String body = "This consultation ends at its scheduled time.";
-        String url = "/clinical/centre/consultations/" + consultation.getPublicId();
-
-        if (consultation.getDoctor() != null) {
-            notifications.notifyUser(consultation.getDoctor(),
-                    NotificationType.CONSULTATION_READY, subject, body, url,
-                    "CentreConsultation", consultation.getId());
-        }
-        notifications.notifyRole("CENTRE_HUB_COORDINATOR", consultation.getCentre(),
-                NotificationType.CONSULTATION_READY, subject, body,
-                "/centre/consultations/" + consultation.getPublicId(),
-                "CentreConsultation", consultation.getId());
-    }
-
-    /**
-     * A centre that never joined is the no-show, not the patient.
-     *
-     * The patient attended in person; if nobody at the centre brought them into
-     * the room, that is the centre's attendance failure. The wallet is already
-     * debited at approval, and Module 3's open decision on wallet treatment for
-     * an incomplete booking is deliberately not pre-empted here: the outcome is
-     * recorded and Finance decides.
-     */
-    private void closeAtSlotEnd(CentreConsultation consultation) {
-        LocalDateTime now = LocalDateTime.now();
-        boolean centreJoined = attendanceRepository
-                .existsByCentreConsultationIdAndParticipantRoleAndEventType(
-                        consultation.getId(), ParticipantRole.CENTRE, AttendanceEventType.JOINED);
-
-        consultation.setEndedAt(now);
-        consultation.setOutcome(centreJoined ? Outcome.COMPLETED : Outcome.NO_SHOW);
-        consultationRepository.save(consultation);
-
-        closeRoom(consultation, "Slot end reached");
-
-        CentreAppointment appointment = consultation.getCentreAppointment();
-        if (appointment != null) {
-            appointment.setStatus(centreJoined ? Status.COMPLETED : Status.NO_SHOW);
-            if (!centreJoined) {
-                appointment.setNoShowAt(now);
-                appointment.setNoShowReason(
-                        "The centre did not join before the session ended");
-            }
-            appointmentRepository.save(appointment);
-        }
-        log.info("Centre consultation {} closed at slot end, outcome {}",
-                consultation.getPublicId(), consultation.getOutcome());
-    }
-
-    /** Deletes the room at the provider. An undeleted room is a way back in. */
     private void closeRoom(CentreConsultation consultation, String why) {
         if (consultation.getRoomName() == null || consultation.getRoomDeletedAt() != null) {
             return;
@@ -359,10 +329,11 @@ public class CentreConsultationService {
             recordAttendance(consultation, ParticipantRole.DOCTOR,
                     AttendanceEventType.ROOM_CLOSED, null, why);
         } catch (RuntimeException e) {
-            // The session is over either way. A provider failure must not leave
-            // the consultation open, but it must be visible: an undeleted room
-            // with a live token is a clinical call anyone holding the link can
-            // walk into.
+            // The session is over either way, and the tokens are already
+            // revoked by the caller. A provider failure must not roll the
+            // termination back, but it must be visible: an undeleted room with
+            // a live token is a clinical call anyone holding the link can walk
+            // into. roomDeletedAt stays null, so the next sweep retries it.
             log.error("Could not delete centre room {} ({}). Room may still exist at provider.",
                     consultation.getRoomName(), why, e);
         }
@@ -408,6 +379,9 @@ public class CentreConsultationService {
         }
         consultationRepository.save(consultation);
 
+        // Tokens first, room second. If the provider is unreachable, the
+        // credential is dead even though the room still exists, which is what
+        // makes it safe to let this transaction stand.
         tokenRepository.revokeAllForCentreConsultation(consultation.getId(), now,
                 "Session terminated: " + reason);
 
