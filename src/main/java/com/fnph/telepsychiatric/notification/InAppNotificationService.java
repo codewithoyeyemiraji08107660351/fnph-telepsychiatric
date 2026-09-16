@@ -46,6 +46,7 @@ public class InAppNotificationService {
     private final NotificationRepository notificationRepository;
     private final RoleRepository roleRepository;
     private final UserRepository userRepository;
+    private final org.springframework.context.ApplicationEventPublisher events;
 
     /** Addressed to one person: their appointment, their document, their payment. */
     @Transactional
@@ -54,7 +55,7 @@ public class InAppNotificationService {
                                    String entityType, Long entityId) {
         Notification notification = base(type, subject, body, actionUrl, entityType, entityId);
         notification.setUser(user);
-        return notificationRepository.save(notification);
+        return published(notificationRepository.save(notification));
     }
 
     /**
@@ -73,7 +74,7 @@ public class InAppNotificationService {
         Notification notification = base(type, subject, body, actionUrl, entityType, entityId);
         notification.setTargetRole(role);
         notification.setCentre(centre);
-        return notificationRepository.save(notification);
+        return published(notificationRepository.save(notification));
     }
 
     @Transactional
@@ -84,7 +85,7 @@ public class InAppNotificationService {
         notification.setPatient(patient);
         userRepository.findByPatient_EhrNumber(patient.getEhrNumber())
                 .ifPresent(notification::setUser);
-        return notificationRepository.save(notification);
+        return published(notificationRepository.save(notification));
     }
 
     /**
@@ -128,6 +129,12 @@ public class InAppNotificationService {
     @Transactional
     public int markAllRead(Long userId, List<String> roleCodes, Long centreId) {
         return notificationRepository.markInboxRead(userId, roleCodes, centreId, LocalDateTime.now());
+    }
+
+    /** Email delivery listens for this and runs after the transaction commits. */
+    private Notification published(Notification saved) {
+        events.publishEvent(new NotificationCreatedEvent(saved.getId()));
+        return saved;
     }
 
     private Notification base(NotificationType type, String subject, String body,

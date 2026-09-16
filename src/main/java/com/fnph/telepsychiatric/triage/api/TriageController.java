@@ -126,6 +126,8 @@ public class TriageController {
     }
 
     @GetMapping("/triage/mine")
+    // The caller's own history. triage.read is the staff permission and the
+    // patient does not hold it, so this answered 403 to the only person it serves.
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).TRIAGE_SUBMIT)")
     @Operation(
             summary = "My triage history",
@@ -153,8 +155,10 @@ public class TriageController {
     }
 
     @GetMapping("/consent/current")
-    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CONSENT_READ)" +
-            "T(com.fnph.telepsychiatric.authz.Permissions).CONSENT_ACCEPT)" )
+    // A patient must be able to read what they are asked to accept. They hold
+    // consent.accept but not consent.read, so this refused them.
+    @PreAuthorize("hasAnyAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CONSENT_READ, "
+            + "T(com.fnph.telepsychiatric.authz.Permissions).CONSENT_ACCEPT)")
     @Operation(
             summary = "The consent text in force",
             description = """
@@ -173,6 +177,19 @@ public class TriageController {
     })
     public ResponseEntity<Map<String, Object>> currentConsent() {
         ConsentDocument document = triageService.activeConsent("FNPH_PATIENT");
+        return ResponseEntity.ok(Map.of(
+                "version", document.getVersion(),
+                "title", document.getTitle(),
+                "body", document.getBody()));
+    }
+
+    @GetMapping("/consent/centre")
+    // The text a centre reads to the patient before submitting a referral. The
+    // patient document above is the FNPH_PATIENT one; centres had no way to
+    // fetch theirs, so the version they recorded was whatever they typed.
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_REFERRAL_CREATE)")
+    public ResponseEntity<Map<String, Object>> centreConsent() {
+        ConsentDocument document = triageService.activeConsent("CENTRE");
         return ResponseEntity.ok(Map.of(
                 "version", document.getVersion(),
                 "title", document.getTitle(),

@@ -75,14 +75,20 @@ public class FinanceController {
         var centre = centreRepository.findByPublicId(centrePublicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such centre"));
 
+        // Known before the call, so the screen can say a resubmission added
+        // nothing instead of implying a second credit landed.
+        boolean replayed = reference != null
+                && ledgerRepository.findByTransactionReference(reference.trim()).isPresent();
         WalletTransaction entry = walletService.credit(
                 centre.getId(), amount, reference, description);
 
-        return ResponseEntity.ok(Map.of(
-                "centre", centre.getName(),
-                "amount", entry.getAmount(),
-                "balance", entry.getBalanceAfter(),
-                "reference", entry.getTransactionReference()));
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("centre", centre.getName());
+        body.put("amount", entry.getAmount());
+        body.put("balance", entry.getBalanceAfter());
+        body.put("reference", entry.getTransactionReference());
+        body.put("replayed", replayed);
+        return ResponseEntity.ok(body);
     }
 
     @GetMapping("/wallets")
@@ -172,6 +178,8 @@ public class FinanceController {
                     **Requires** `wallet.read_balance`.
                     """)
     @ApiResponse(responseCode = "200", description = "Open alerts, oldest first.")
+    // Each alert names its centre, which is lazy.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> alerts() {
         return ResponseEntity.ok(alertRepository.findAllByClearedAtIsNullOrderByRaisedAtAsc()
                 .stream().map(a -> {

@@ -34,8 +34,11 @@ build/
 .vscode/
 
 # Secrets
-.env.dev
+.env
 .env.local
+.env.*
+!.env.example
+!.env.production.example
 *.pem
 *.p12
 

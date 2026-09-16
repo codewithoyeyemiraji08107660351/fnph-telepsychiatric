@@ -81,6 +81,38 @@ public class CentreConsultationController {
                 centreAppointmentPublicId, ParticipantRole.DOCTOR, clientIp(http))));
     }
 
+    // The same clinician controls as the FNPH room. Without these a doctor on a
+    // centre consultation could not record identity, change modality, or end
+    // the session with a safety action; the service methods had no caller.
+
+    @PostMapping("/{consultationPublicId}/identity-confirmed")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CONSULTATION_JOIN_AS_DOCTOR)")
+    public ResponseEntity<Void> confirmIdentity(@PathVariable String consultationPublicId) {
+        centreConsultationService.confirmIdentity(consultationPublicId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{consultationPublicId}/modality")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CONSULTATION_SWITCH_MODALITY)")
+    public ResponseEntity<Void> switchModality(
+            @PathVariable String consultationPublicId,
+            @RequestParam com.fnph.telepsychiatric.consultation.Modality modality,
+            @RequestParam(required = false) String reason) {
+        centreConsultationService.switchModality(consultationPublicId, modality, reason);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{consultationPublicId}/terminate")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CONSULTATION_TERMINATE)")
+    public ResponseEntity<Void> terminate(
+            @PathVariable String consultationPublicId,
+            @jakarta.validation.Valid @RequestBody TerminateConsultationRequest request) {
+        centreConsultationService.terminate(consultationPublicId,
+                com.fnph.telepsychiatric.consultation.TerminationReason.valueOf(request.reason()),
+                request.note(), request.safetyAction());
+        return ResponseEntity.noContent().build();
+    }
+
     private JoinConsultationResponse toResponse(ConsultationService.JoinDetails d) {
         return new JoinConsultationResponse(
                 d.consultationPublicId(), d.roomUrl(), d.token(),

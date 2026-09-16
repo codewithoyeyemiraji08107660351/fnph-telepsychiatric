@@ -85,8 +85,7 @@ public class CentreConsultationService {
 
         CentreConsultation consultation = consultationRepository
                 .findByCentreAppointmentId(appointment.getId())
-                .orElseThrow(() -> new IllegalStateException(
-                        "That appointment has no consultation yet"));
+                .orElseGet(CentreConsultation::new);
 
         consultation.setCentre(appointment.getCentre());
         consultation.setCentreAppointment(appointment);
@@ -231,8 +230,28 @@ public class CentreConsultationService {
             return appointmentRepository.findByCentreIdAndPublicId(centreId, publicId)
                     .orElseThrow(() -> new EntityNotFoundException("No such consultation"));
         }
-        return appointmentRepository.findByPublicId(publicId)
+        // The doctor is hospital-scoped, but only the doctor the Hub
+        // Coordinator assigned may enter. Same answer as a missing record.
+        CentreAppointment appointment = appointmentRepository.findByPublicId(publicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such consultation"));
+        Long caller = com.fnph.telepsychiatric.security.CurrentUser.get()
+                .map(com.fnph.telepsychiatric.security.SecurityUser::getUserId).orElse(null);
+        if (appointment.getDoctor() == null || !appointment.getDoctor().getId().equals(caller)) {
+            throw new EntityNotFoundException("No such consultation");
+        }
+        return appointment;
+    }
+
+    /** The centre consultation, when the caller is its doctor. */
+    private CentreConsultation requireOwnConsultation(String consultationPublicId) {
+        CentreConsultation consultation = consultationRepository.findByPublicId(consultationPublicId)
+                .orElseThrow(() -> new ConsultationService.ConsultationException("No such consultation"));
+        Long caller = com.fnph.telepsychiatric.security.CurrentUser.get()
+                .map(com.fnph.telepsychiatric.security.SecurityUser::getUserId).orElse(null);
+        if (consultation.getDoctor() == null || !consultation.getDoctor().getId().equals(caller)) {
+            throw new ConsultationService.ConsultationException("No such consultation");
+        }
+        return consultation;
     }
 
     private String displayNameFor(CentreAppointment appointment, ParticipantRole role) {
@@ -347,10 +366,7 @@ public class CentreConsultationService {
     @Transactional
     public CentreConsultation terminate(String consultationPublicId, TerminationReason reason,
                                         String note, String safetyAction) {
-        CentreConsultation consultation = consultationRepository
-                .findByPublicId(consultationPublicId)
-                .orElseThrow(() -> new ConsultationService.ConsultationException(
-                        "No such consultation"));
+        CentreConsultation consultation = requireOwnConsultation(consultationPublicId);
 
         if (consultation.getEndedAt() != null) {
             return consultation;
@@ -417,10 +433,7 @@ public class CentreConsultationService {
     @Transactional
     public CentreConsultation switchModality(String consultationPublicId,
                                              Modality modality, String reason) {
-        CentreConsultation consultation = consultationRepository
-                .findByPublicId(consultationPublicId)
-                .orElseThrow(() -> new ConsultationService.ConsultationException(
-                        "No such consultation"));
+        CentreConsultation consultation = requireOwnConsultation(consultationPublicId);
 
         consultation.setModality(modality);
         consultation.setHasAudioFallback(
@@ -434,10 +447,7 @@ public class CentreConsultationService {
 
     @Transactional
     public CentreConsultation confirmIdentity(String consultationPublicId) {
-        CentreConsultation consultation = consultationRepository
-                .findByPublicId(consultationPublicId)
-                .orElseThrow(() -> new ConsultationService.ConsultationException(
-                        "No such consultation"));
+        CentreConsultation consultation = requireOwnConsultation(consultationPublicId);
 
         consultation.setIdentityConfirmed(true);
         consultationRepository.save(consultation);

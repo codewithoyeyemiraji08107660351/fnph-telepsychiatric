@@ -42,7 +42,9 @@ class EveryEndpointIsGuardedTest {
     private static final Set<String> PUBLIC_CONTROLLERS = Set.of(
             "AuthController",
             "EnrolmentController",
-            "RemitaWebhookController"
+            "RemitaWebhookController",
+            // Serves a fixed allow-list of non-sensitive settings to landing pages.
+            "PublicInfoController"
     );
 
     /**

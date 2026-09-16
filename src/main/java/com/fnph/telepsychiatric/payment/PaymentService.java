@@ -1,5 +1,7 @@
 package com.fnph.telepsychiatric.payment;
 
+import com.fnph.telepsychiatric.appointment.AppointmentRepository;
+import com.fnph.telepsychiatric.appointment.Status;
 import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.configuration.ConfigurationKeys;
@@ -56,6 +58,7 @@ public class PaymentService {
     private final ConfigurationService configuration;
     private final InAppNotificationService notifications;
     private final AuditService auditService;
+    private final AppointmentRepository appointmentRepository;
 
     // -----------------------------------------------------------------
     // Initiation
@@ -78,6 +81,17 @@ public class PaymentService {
             // Already paid and not yet booked. Returning the existing payment
             // rather than starting another is what stops a patient paying twice
             // by refreshing the page.
+            //
+            // It also covers a hold that lapsed after payment: the money is here
+            // and a new time is held, but the verification event was spent on the
+            // old hold. Raise it again so the new hold is confirmed instead of
+            // expiring with the patient's money on file.
+            boolean holding = appointmentRepository
+                    .findAllByPatientIdOrderByAppointmentDateDesc(patient.getId()).stream()
+                    .anyMatch(a -> a.getStatus() == Status.SLOT_HELD);
+            if (holding) {
+                publishVerified(existing.get(), "reused for a new hold");
+            }
             return existing.get();
         }
 
@@ -134,9 +148,34 @@ public class PaymentService {
         return payment;
     }
 
+    private void publishVerified(Payment payment, String note) {
+        OutboxEvent event = new OutboxEvent();
+        event.setAggregateType("Payment");
+        event.setAggregateId(payment.getId());
+        event.setEventType("PAYMENT_VERIFIED");
+        event.setPayload("{\"reference\":\"%s\",\"patientId\":%d,\"note\":\"%s\"}"
+                .formatted(payment.getReference(), payment.getPatient().getId(), note));
+        outboxRepository.save(event);
+    }
+
     // -----------------------------------------------------------------
     // Verification
     // -----------------------------------------------------------------
+
+    /**
+     * Verification on behalf of the patient who owns the payment.
+     *
+     * The patient endpoint took any reference, so one patient could read
+     * another's amount, status and RRR. A reference that is not theirs gets
+     * the same answer as one that does not exist.
+     */
+    @Transactional
+    public Payment verifyForPatient(String reference, Long patientId) {
+        Payment payment = paymentRepository.findByReference(reference)
+                .filter(p -> p.getPatient().getId().equals(patientId))
+                .orElseThrow(() -> new PaymentException("No payment with that reference"));
+        return verify(payment.getReference());
+    }
 
     /**
      * Asks Remita what happened and acts on the answer.
@@ -318,16 +357,6 @@ public class PaymentService {
         }
     }
 
-    private void publishVerified(Payment payment, String note) {
-        OutboxEvent event = new OutboxEvent();
-        event.setAggregateType("Payment");
-        event.setAggregateId(payment.getId());
-        event.setEventType("PAYMENT_VERIFIED");
-        event.setPayload("{\"reference\":\"%s\",\"patientId\":%d,\"note\":\"%s\"}"
-                .formatted(payment.getReference(), payment.getPatient().getId(), note));
-        outboxRepository.save(event);
-    }
-
     private String extractOrderId(String payload) {
         try {
             com.fasterxml.jackson.databind.JsonNode node =
@@ -400,13 +429,5 @@ public class PaymentService {
         public PaymentException(String message) {
             super(message);
         }
-    }
-
-    @Transactional
-    public Payment verifyForPatient(String reference, Long patientId) {
-        Payment payment = paymentRepository.findByReference(reference)
-                .filter(p -> p.getPatient().getId().equals(patientId))
-                .orElseThrow(() -> new PaymentException("No payment with that reference"));
-        return verify(payment.getReference());
     }
 }

@@ -1,56 +1,69 @@
-# Production stack for the Hostinger VPS.
+# Production stack for Dokploy (Docker Compose service).
 #
-# Deployed through Dokploy, which runs Traefik in front of this: TLS
-# certificates, renewal and routing are its job, not this file's. So no ports
-# are published for the application, only the internal 8080 Traefik reaches.
+# Only the backend is reachable from outside, and only through Dokploy's
+# Traefik proxy on HTTPS. MySQL, Redis and RabbitMQ publish no ports.
 #
-# MySQL, Redis and RabbitMQ publish nothing at all. They are reachable by
-# service name on the internal network and by nothing else, which is why the
-# firewall only has to open 22, 80 and 443.
-#
-# ON MEMORY
-#   8 GB total, shared with Dokploy and Traefik. Every service has an explicit
-#   limit, because without one a single service under load takes the whole box
-#   and the kernel kills whichever process is largest, which is MySQL,
-#   mid-consultation.
-#
-#     Dokploy + Traefik   ~0.5 GB
-#     MySQL                2.0 GB
-#     Application          2.5 GB
-#     RabbitMQ             0.5 GB
-#     Redis                0.3 GB
-#     OS and headroom      ~2.2 GB
-#
-#   That headroom is deliberate: it is where ClamAV goes when FNPH decides to
-#   turn scanning on, and it is what absorbs a Flyway migration or a backup
-#   running at the same time as a busy clinic.
+# Every variable below comes from the Environment tab in Dokploy. The template,
+# with how to generate each secret, is .env.production.example.
 
 services:
-  app:
+  backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: fnph-app
     restart: unless-stopped
-    env_file: .env.dev
     environment:
       SPRING_PROFILES_ACTIVE: prod
-      # Service name, not localhost. The application and the database are
-      # separate containers.
+      SERVER_PORT: 8080
+      APP_BASE_URL: ${APP_BASE_URL}
+      APP_PORTAL_URL: ${APP_PORTAL_URL}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+
       DB_HOST: mysql
       DB_PORT: 3306
+      DB_NAME: ${DB_NAME}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_USE_SSL: "true"
+
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      STORAGE_ROOT: /app/storage
-      TZ: Africa/Lagos
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      MFA_REQUIRED: ${MFA_REQUIRED:-true}
+
+      MAIL_HOST: ${MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+      NOTIFICATION_EMAIL_ENABLED: ${NOTIFICATION_EMAIL_ENABLED:-true}
+
+      REMITA_BASE_URL: ${REMITA_BASE_URL}
+      REMITA_MERCHANT_ID: ${REMITA_MERCHANT_ID}
+      REMITA_SERVICE_TYPE_ID: ${REMITA_SERVICE_TYPE_ID}
+      REMITA_API_KEY: ${REMITA_API_KEY}
+      REMITA_API_TOKEN: ${REMITA_API_TOKEN}
+      REMITA_WEBHOOK_SECRET: ${REMITA_WEBHOOK_SECRET}
+
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-daily}
+      DAILY_API_KEY: ${DAILY_API_KEY}
+      DAILY_DOMAIN: ${DAILY_DOMAIN}
+      DAILY_WEBHOOK_SECRET: ${DAILY_WEBHOOK_SECRET}
+
+      ENROLMENT_REQUIRE_CORROBORATION: ${ENROLMENT_REQUIRE_CORROBORATION:-false}
+      UPLOAD_REQUIRE_CLEAN_SCAN: ${UPLOAD_REQUIRE_CLEAN_SCAN:-false}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError}
     volumes:
-      # Documents and uploads. Must be backed up together with the database:
-      # a database restored without this has issued_documents rows pointing at
-      # files that do not exist, which looks like a working system until a
-      # patient opens a prescription.
-      - fnph_storage:/app/storage
+      # Uploaded files and issued documents. Back up with the database.
+      - fnph_storage:/var/lib/fnph/storage
     depends_on:
       mysql:
         condition: service_healthy
@@ -58,147 +71,88 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    networks:
+      - internal
+      - dokploy-network
     deploy:
       resources:
         limits:
-          memory: 2560M
-    networks:
-      - fnph
-    logging:
-      driver: json-file
-      options:
-        # Without this, one stack trace loop fills 100 GB and the disk fills
-        # before anyone notices.
-        max-size: "20m"
-        max-file: "5"
+          memory: 2g
 
   mysql:
     image: mysql:8.4
-    container_name: fnph-mysql
     restart: unless-stopped
-    # Flags on the command line rather than a mounted cnf. The local stack
-    # mounts docker/mysql/fnph.cnf and MySQL silently ignores it, because a
-    # Windows bind mount presents as world-writable and MySQL refuses to read a
-    # config file anyone could edit. That problem does not exist on Linux, but
-    # command flags cannot be ignored at all, which is the better property.
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_0900_ai_ci
-      # 1 GB of the 2 GB limit. The rest is connections, sort buffers and the
-      # server itself.
-      - --innodb-buffer-pool-size=1G
-      # Full durability. The default is already 1; stated because a later
-      # performance tweak to 2 trades a committed transaction for speed, and on
-      # a clinical record that is not a trade anyone should make quietly.
-      - --innodb-flush-log-at-trx-commit=1
-      # 20 in the pool plus room for the backup user and a session someone left
-      # open in a client.
-      - --max-connections=60
-      - --slow-query-log=1
-      - --long-query-time=2
+    command: --defaults-extra-file=/etc/mysql/conf.d/fnph.cnf
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME:-telepsychiatric}
-      MYSQL_USER: ${DB_USERNAME:-fnph_app}
-      MYSQL_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
-      TZ: Africa/Lagos
-    # No ports. Deliberately.
-    #
-    # The local stack publishes 3307 so a client on Windows can reach it.
-    # Publishing it here would put a database holding psychiatric records on a
-    # public IP behind one password, and 3306 is scanned constantly. The
-    # application reaches it by service name; a human reaches it through
-    # `docker exec` over SSH.
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./backups:/backups
+      - ./docker/mysql/fnph.cnf:/etc/mysql/conf.d/fnph.cnf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    networks:
+      - internal
     deploy:
       resources:
         limits:
-          memory: 2048M
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_ROOT_PASSWORD}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
-    networks:
-      - fnph
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
+          memory: 2g
 
   redis:
     image: redis:7.4-alpine
-    container_name: fnph-redis
     restart: unless-stopped
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
-      - --requirepass
-      - ${REDIS_PASSWORD:?set REDIS_PASSWORD}
-      # A cap plus an eviction policy, because Redis with no maxmemory grows
-      # until the container limit kills it. allkeys-lru is right for a cache;
-      # if anything here is state rather than cache, this is the wrong policy
-      # and worth checking before go-live.
-      - --maxmemory
-      - 200mb
-      - --maxmemory-policy
-      - allkeys-lru
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
-    deploy:
-      resources:
-        limits:
-          memory: 300M
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 6
     networks:
-      - fnph
-
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    container_name: fnph-rabbitmq
-    restart: unless-stopped
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:?set RABBITMQ_USERNAME}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}
-      TZ: Africa/Lagos
-    # The management interface on 15672 is NOT published.
-    #
-    # The local stack publishes it and the default guest/guest login works
-    # there. On a public IP that is a queue browser holding message bodies,
-    # open to anyone who finds the port. Reach it over an SSH tunnel when
-    # needed:
-    #   ssh -L 15672:localhost:15672 fnph@89.116.229.219
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+      - internal
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 256m
+
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    restart: unless-stopped
+    hostname: fnph-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 8
+      start_period: 30s
     networks:
-      - fnph
+      - internal
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+networks:
+  internal:
+  dokploy-network:
+    external: true
 
 volumes:
   mysql_data:
   redis_data:
   rabbitmq_data:
-  # Named, not a bind mount. Docker owns the permissions, which is what stops
-  # the uid mismatch that breaks uploads on a host-mounted directory.
   fnph_storage:
-
-networks:
-  fnph:
-    driver: bridge

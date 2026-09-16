@@ -17,6 +17,15 @@ public interface SessionRepository extends JpaRepository<UserSession, Long> {
 
     Optional<UserSession> findByPublicId(String publicId);
 
+    /** Read on every authenticated request, so it selects columns, not the entity. */
+    @Query("""
+           select new com.fnph.telepsychiatric.session.SessionState(
+                  s.id, s.user.id, s.revokedAt, s.expiresAt, s.lastSeenAt)
+             from UserSession s
+            where s.publicId = :publicId
+           """)
+    Optional<SessionState> findStateByPublicId(@Param("publicId") String publicId);
+
     @Query("""
            select s from UserSession s
            where s.user.id = :userId and s.revokedAt is null and s.replacedAt is null

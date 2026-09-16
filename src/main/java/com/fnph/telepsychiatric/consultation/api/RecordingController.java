@@ -147,11 +147,16 @@ public class RecordingController {
                             + "appointment is not confirmed.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
+    @Deprecated
     public ResponseEntity<Map<String, Object>> joinAsCentre(
             @PathVariable String centreAppointmentPublicId, HttpServletRequest http) {
 
+        // Scoped to the caller's centre. The unscoped lookup let any centre read
+        // another centre's appointment time and room. Superseded by
+        // POST /api/v1/centre-consultations/{id}/join/centre, which issues the token.
         var appointment = centreAppointmentRepository
-                .findByPublicId(centreAppointmentPublicId)
+                .findByCentreIdAndPublicId(com.fnph.telepsychiatric.tenancy.TenantContext.requireCentreId(),
+                        centreAppointmentPublicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such consultation"));
 
         return ResponseEntity.ok(Map.of(

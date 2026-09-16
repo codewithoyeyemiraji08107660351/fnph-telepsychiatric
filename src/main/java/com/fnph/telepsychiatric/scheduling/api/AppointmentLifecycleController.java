@@ -89,7 +89,10 @@ public class AppointmentLifecycleController {
             @Parameter(description = "For a reschedule, the time you would prefer.")
             @RequestParam(required = false) String proposedSlotPublicId) {
 
-        Appointment appointment = require(appointmentPublicId);
+        Appointment appointment = requireOwnIfPatient(appointmentPublicId);
+        if (!"CANCEL".equals(requestType) && !"RESCHEDULE".equals(requestType)) {
+            throw new IllegalArgumentException("Ask to CANCEL or to RESCHEDULE.");
+        }
 
         if (appointment.getStatus() != Status.APPROVED
                 && appointment.getStatus() != Status.AWAITING_APPROVAL) {
@@ -136,6 +139,31 @@ public class AppointmentLifecycleController {
                 "status", saved.getStatus()));
     }
 
+    @GetMapping("/day")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_READ)")
+    @Transactional(readOnly = true)
+    @Operation(summary = "One day's appointments",
+            description = "The hub's view of a day, in hospital time. Recording a no-show or moving an "
+                    + "appointment needs its id, and nothing listed confirmed appointments.")
+    public ResponseEntity<List<Map<String, Object>>> day(
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate date) {
+        LocalDateTime from = com.fnph.telepsychiatric.common.HospitalClock.toUtc(date, java.time.LocalTime.MIDNIGHT);
+        return ResponseEntity.ok(appointmentRepository.findDay(from, from.plusDays(1)).stream().map(a -> {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("publicId", a.getPublicId());
+            row.put("reference", a.getReference());
+            row.put("status", a.getStatus().name());
+            row.put("appointmentDate", a.getAppointmentDate());
+            row.put("scheduledEndAt", a.getScheduledEndAt());
+            row.put("room", a.getRoom());
+            row.put("patientName", a.getPatient().getFirstName() + " " + a.getPatient().getLastName());
+            row.put("ehrNumber", a.getPatient().getEhrNumber());
+            row.put("doctorName", a.getDoctor() == null ? null : a.getDoctor().getFullName());
+            return row;
+        }).toList());
+    }
+
     @GetMapping("/cancellations")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_READ)")
     @Operation(
@@ -146,12 +174,20 @@ public class AppointmentLifecycleController {
                     **Requires** `appointment.read`.
                     """)
     @ApiResponse(responseCode = "200", description = "Requests returned.")
+    @Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> cancellations() {
         return ResponseEntity.ok(cancellationRepository
                 .findAllByStatusOrderByRequestedAtAsc("SUBMITTED").stream().map(r -> {
                     Map<String, Object> row = new java.util.LinkedHashMap<>();
                     row.put("publicId", r.getPublicId());
                     row.put("appointmentReference", r.getAppointment().getReference());
+                    row.put("appointmentPublicId", r.getAppointment().getPublicId());
+                    row.put("appointmentDate", r.getAppointment().getAppointmentDate());
+                    row.put("appointmentStatus", r.getAppointment().getStatus().name());
+                    row.put("patientName", r.getAppointment().getPatient().getFirstName() + " "
+                            + r.getAppointment().getPatient().getLastName());
+                    row.put("requestedBy", r.getRequestedBy());
+                    row.put("proposedTime", r.getProposedSlot() == null ? null : r.getProposedSlot().getStartAt());
                     row.put("requestType", r.getRequestType());
                     row.put("reason", r.getReason());
                     row.put("hoursNotice", r.getHoursNotice());
@@ -161,7 +197,9 @@ public class AppointmentLifecycleController {
     }
 
     @PostMapping("/cancellations/{requestPublicId}/decide")
-    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_CANCEL)")
+    // Deciding is the hub's call. appointment.cancel is also a patient
+    // permission, so under it a patient could approve their own request.
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_APPROVE)")
     @Operation(
             summary = "Approve or refuse a cancellation",
             description = """
@@ -182,6 +220,12 @@ public class AppointmentLifecycleController {
 
         CancellationRequest request = cancellationRepository.findByPublicId(requestPublicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such request"));
+        if (!"SUBMITTED".equals(request.getStatus())) {
+            throw new IllegalStateException("That request has already been decided");
+        }
+        if (!approve && (notes == null || notes.isBlank())) {
+            throw new IllegalArgumentException("Say why, so the patient knows what to do next.");
+        }
 
         request.setStatus(approve ? "APPROVED" : "REFUSED");
         request.setDecidedBy(CurrentUser.usernameOrSystem());
@@ -244,10 +288,24 @@ public class AppointmentLifecycleController {
             @RequestParam String newSlotPublicId,
             @RequestParam String reason) {
 
-        Appointment appointment = require(appointmentPublicId);
+        Appointment appointment = requireOwnIfPatient(appointmentPublicId);
+        if (appointment.getStatus() != Status.APPROVED
+                && appointment.getStatus() != Status.AWAITING_APPROVAL) {
+            throw new IllegalStateException("Only a pending or confirmed appointment can be moved. This one is "
+                    + appointment.getStatus() + ".");
+        }
+        if (appointment.getAppointmentDate().isBefore(LocalDateTime.now())) {
+            throw new IllegalStateException("That appointment has already passed");
+        }
 
         Slot located = slotRepository.findByPublicId(newSlotPublicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such time"));
+        // Patient times only. A centre slot belongs to the centre schedule.
+        if (located.getPublication() == null
+                || located.getPublication().getAudience()
+                        != ScheduleAudience.FNPH_PATIENT) {
+            throw new IllegalArgumentException("That time is not open to patients. Choose another.");
+        }
         Slot target = slotRepository.findByIdForUpdate(located.getId())
                 .filter(Slot::isClaimable)
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -315,6 +373,12 @@ public class AppointmentLifecycleController {
     public ResponseEntity<Void> noShow(@PathVariable String appointmentPublicId,
                                        @RequestParam String notes) {
         Appointment appointment = require(appointmentPublicId);
+        if (appointment.getStatus() != Status.APPROVED && appointment.getStatus() != Status.IN_PROGRESS) {
+            throw new IllegalStateException("Only a confirmed appointment can be recorded as not attended");
+        }
+        if (appointment.getAppointmentDate().isAfter(LocalDateTime.now())) {
+            throw new IllegalStateException("That appointment has not started yet");
+        }
 
         appointment.setStatus(Status.NO_SHOW);
         appointment.setNoShowAt(LocalDateTime.now());
@@ -341,6 +405,20 @@ public class AppointmentLifecycleController {
         entry.setChangedAt(LocalDateTime.now());
         entry.setReason(reason);
         historyRepository.save(entry);
+    }
+
+    /**
+     * The appointment, and for a patient only their own. Patients hold the
+     * cancel and reschedule permissions, and without this could act on anyone's
+     * appointment by id. Same answer as a missing appointment.
+     */
+    private Appointment requireOwnIfPatient(String publicId) {
+        Appointment appointment = require(publicId);
+        Long patientId = CurrentUser.get().map(u -> u.getPatientId()).orElse(null);
+        if (patientId != null && !patientId.equals(appointment.getPatient().getId())) {
+            throw new EntityNotFoundException("No such appointment");
+        }
+        return appointment;
     }
 
     private Appointment require(String publicId) {

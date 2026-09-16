@@ -142,9 +142,10 @@ public class SessionService {
      * Ends every session for an account.
      *
      * Called on password change, on reset, on deactivation and by an
-     * administrator holding session.revoke. Password change keeps the current
-     * session so the user is not signed out of the device they just used;
-     * everything else keeps none.
+     * administrator holding session.revoke. Password change passes the current
+     * session so the user stays signed in on the device they just used;
+     * everything else passes null and keeps none. Takes effect on the next
+     * request, because access tokens are checked against their session.
      */
     @Transactional
     public int revokeAll(Long userId, Long exceptSessionId, String reason) {
@@ -152,6 +153,43 @@ public class SessionService {
                 LocalDateTime.now(), CurrentUser.usernameOrSystem(), reason);
         log.info("Revoked {} sessions for user {}: {}", count, userId, reason);
         return count;
+    }
+
+    /**
+     * Confirms the session behind an access token is still live, and records
+     * activity on it.
+     *
+     * This is what makes revocation immediate. Without it, a revoked device,
+     * a deactivated account's other devices, or a session ended by an
+     * administrator would keep working until its access token expired.
+     *
+     * @return the internal session id, or empty when the token must be refused
+     */
+    @Transactional
+    public Optional<Long> authenticateRequest(String sessionPublicId, Long userId) {
+        if (sessionPublicId == null || userId == null) {
+            return Optional.empty();
+        }
+        LocalDateTime now = LocalDateTime.now();
+        Optional<SessionState> found = sessionRepository.findStateByPublicId(sessionPublicId);
+        if (found.isEmpty()) {
+            log.warn("Session {} not found", sessionPublicId);
+            return Optional.empty();
+        }
+        if (!found.get().isUsableBy(userId, now, jwtProperties.getInactivityTimeoutMinutes())) {
+            SessionState s = found.get();
+            // Reported with both clocks, so a time-zone mismatch between the
+            // application and the database shows up as an obviously wrong gap.
+            log.warn("Session {} refused: owner={} caller={} revokedAt={} expiresAt={} lastSeenAt={} now={} idleLimitMinutes={}",
+                    sessionPublicId, s.userId(), userId, s.revokedAt(), s.expiresAt(), s.lastSeenAt(), now,
+                    jwtProperties.getInactivityTimeoutMinutes());
+            return Optional.empty();
+        }
+        SessionState state = found.get();
+        if (state.needsTouch(now)) {
+            sessionRepository.touch(state.id(), now);
+        }
+        return Optional.of(state.id());
     }
 
     /** Advances lastSeenAt so an active session is not cut off by the idle timer. */

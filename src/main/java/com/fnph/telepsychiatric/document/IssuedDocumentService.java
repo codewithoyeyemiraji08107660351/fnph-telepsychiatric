@@ -56,6 +56,7 @@ public class IssuedDocumentService {
     private final ConfigurationService configuration;
     private final AuditService auditService;
 
+    // Links a person opens in a browser point at the portal, not the API host.
     @Value("${application.portal-url:${application.base-url}}")
     private String baseUrl;
 

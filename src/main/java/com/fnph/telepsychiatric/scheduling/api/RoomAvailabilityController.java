@@ -42,6 +42,7 @@ public class RoomAvailabilityController {
     private final RoomRepository roomRepository;
     private final DoctorAvailabilityRepository availabilityRepository;
     private final UserRepository userRepository;
+    private final com.fnph.telepsychiatric.scheduling.SlotRepository slotRepository;
 
     @GetMapping("/rooms")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).ROOM_READ)")
@@ -131,13 +132,35 @@ public class RoomAvailabilityController {
                     **Requires** `room.manage`.
                     """)
     @ApiResponse(responseCode = "204", description = "Deactivated.")
+
     @Transactional
-    public ResponseEntity<Void> deactivateRoom(@PathVariable String roomPublicId) {
+    public ResponseEntity<Map<String, Object>> deactivateRoom(@PathVariable String roomPublicId) {
         Room room = roomRepository.findByPublicId(roomPublicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such room"));
         room.setIsActive(false);
         roomRepository.save(room);
-        return ResponseEntity.noContent().build();
+
+        // Deactivating only stopped new days generating slots in this room. Slots
+        // already published stayed AVAILABLE, so patients kept booking a room that
+        // was out of service. Close the open ones, and report the ones already
+        // taken so someone moves those appointments.
+        LocalDateTime now = LocalDateTime.now();
+        var open = slotRepository.findAllByRoomIdAndStateAndStartAtAfter(
+                room.getId(), com.fnph.telepsychiatric.scheduling.SlotState.AVAILABLE, now);
+        for (var slot : open) {
+            slot.setState(com.fnph.telepsychiatric.scheduling.SlotState.BLOCKED);
+            slot.setBlockedReason("Room " + room.getCode() + " taken out of service");
+        }
+        slotRepository.saveAll(open);
+        long taken = slotRepository.countByRoomIdAndStateInAndStartAtAfter(room.getId(),
+                List.of(com.fnph.telepsychiatric.scheduling.SlotState.HELD,
+                        com.fnph.telepsychiatric.scheduling.SlotState.BOOKED), now);
+
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("roomCode", room.getCode());
+        body.put("openSlotsClosed", open.size());
+        body.put("bookedSlotsToMove", taken);
+        return ResponseEntity.ok(body);
     }
 
     @PostMapping("/availability")
@@ -221,6 +244,8 @@ public class RoomAvailabilityController {
                     **Requires** `doctor_availability.read`.
                     """)
     @ApiResponse(responseCode = "200", description = "Availability returned.")
+    // Rows name each doctor, a lazy association.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> availability(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate serviceDate) {
 

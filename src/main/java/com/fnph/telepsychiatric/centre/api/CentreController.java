@@ -34,6 +34,8 @@ public class CentreController {
     private final CentreReferralRepository referralRepository;
     private final CentrePatientRepository patientRepository;
     private final CenterRepository centreRepository;
+    private final com.fnph.telepsychiatric.appointment.CentreAppointmentRepository appointmentRepository;
+    private final com.fnph.telepsychiatric.configuration.ConfigurationService configuration;
 
     @PostMapping("/referrals")
     @ResponseStatus(HttpStatus.CREATED)
@@ -67,6 +69,7 @@ public class CentreController {
                     description = "The centre is not active, or the referral reason is missing.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<CentreReferralResponse> create(
             @Valid @RequestBody CreateReferralRequest request) {
 
@@ -110,6 +113,7 @@ public class CentreController {
                     description = "Already submitted, or consent details are missing.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<CentreReferralResponse> submit(
             @PathVariable String referralPublicId,
             @Parameter(description = "The consent document version the patient accepted.",
@@ -120,6 +124,55 @@ public class CentreController {
             @RequestParam String consentWitnessedBy) {
         return ResponseEntity.ok(toResponse(referralService.submit(
                 referralPublicId, consentVersion, consentWitnessedBy)));
+    }
+
+    @GetMapping("/appointments")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_REFERRAL_READ)")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    @Operation(
+            summary = "This centre's consultations",
+            description = "Requested, approved and recent consultations at this centre, soonest first. "
+                    + "The centre had no way to find an appointment to join; the booking request "
+                    + "returned its id once and nothing listed it again.")
+    public ResponseEntity<List<Map<String, Object>>> appointments() {
+        Long centreId = TenantContext.requireCentreId();
+        int lead = configuration.getInt(com.fnph.telepsychiatric.configuration.ConfigurationKeys.ROOM_OPEN_LEAD_MINUTES);
+        return ResponseEntity.ok(appointmentRepository
+                .findAllByCentreIdAndAppointmentDateAfterOrderByAppointmentDateAsc(
+                        centreId, java.time.LocalDateTime.now().minusDays(7))
+                .stream().map(a -> {
+                    Map<String, Object> row = new java.util.LinkedHashMap<>();
+                    row.put("publicId", a.getPublicId());
+                    row.put("reference", a.getReference());
+                    row.put("status", a.getStatus().name());
+                    row.put("appointmentDate", a.getAppointmentDate());
+                    row.put("scheduledEndAt", a.getScheduledEndAt());
+                    row.put("joinWindowOpensAt", a.getAppointmentDate().minusMinutes(lead));
+                    row.put("room", a.getRoom());
+                    row.put("patientName", a.getCentrePatient().getFirstName() + " "
+                            + a.getCentrePatient().getLastName());
+                    row.put("centrePatientId", a.getCentrePatient().getCentrePatientId());
+                    row.put("referralReference", a.getReferral() == null ? null : a.getReferral().getReference());
+                    // Why FNPH returned the request. It was only in the notification.
+                    row.put("returnedReason", a.getReturnedReason());
+                    return row;
+                }).toList());
+    }
+
+    @GetMapping("/referrals")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_REFERRAL_READ)")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    @Operation(
+            summary = "This centre's referrals",
+            description = "Every referral at this centre, newest first, optionally by status. "
+                    + "Before this a coordinator had to open each patient to see what was in flight.")
+    public ResponseEntity<List<CentreReferralResponse>> referrals(
+            @RequestParam(required = false) ReferralStatus status) {
+        Long centreId = TenantContext.requireCentreId();
+        var rows = status == null
+                ? referralRepository.findAllByCentreIdOrderByCreatedAtDesc(centreId)
+                : referralRepository.findAllByCentreIdAndStatusOrderByCreatedAtDesc(centreId, status);
+        return ResponseEntity.ok(rows.stream().map(this::toResponse).toList());
     }
 
     @GetMapping("/patients/{centrePatientPublicId}/referrals")
@@ -139,6 +192,7 @@ public class CentreController {
                     **Requires** `centre_referral.read`.
                     """)
     @ApiResponse(responseCode = "200", description = "History returned.")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<List<CentreReferralResponse>> history(
             @PathVariable String centrePatientPublicId) {
         var patient = patientRepository
@@ -167,6 +221,7 @@ public class CentreController {
 
                     **Requires** `centre_bundle.read`.
                     """)
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> treated() {
         return ResponseEntity.ok(referralService.treatedHistory().stream()
                 .map(this::toQueueItem).toList());
@@ -190,6 +245,7 @@ public class CentreController {
                     **Requires** `centre_bundle.read`.
                     """)
     @ApiResponse(responseCode = "200", description = "Queue returned, oldest first.")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> incoming() {
         return ResponseEntity.ok(referralService.incoming().stream()
                 .map(this::toQueueItem).toList());
@@ -241,6 +297,7 @@ public class CentreController {
                     **Requires** `centre_report.read`.
                     """)
     @ApiResponse(responseCode = "200", description = "Counts returned.")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<CentreReferralService.UtilisationSummary> utilisation() {
         return ResponseEntity.ok(referralService.utilisation());
     }

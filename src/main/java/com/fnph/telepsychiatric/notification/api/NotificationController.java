@@ -54,6 +54,8 @@ public class NotificationController {
                     """)
     @ApiResponse(responseCode = "200", description = "Notifications returned, newest first.",
             content = @Content(schema = @Schema(implementation = NotificationResponse.class)))
+    // Rows read the target role and acknowledging user, both lazy.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<List<NotificationResponse>> inbox(
             @Parameter(description = "Only items not yet read.", example = "false")
             @RequestParam(defaultValue = "false") boolean unreadOnly) {

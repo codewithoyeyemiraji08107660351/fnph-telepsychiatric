@@ -1,11 +1,12 @@
 package com.fnph.telepsychiatric.clinical;
 
-import com.fnph.telepsychiatric.consultation.CentreConsultationNote;
 import com.fnph.telepsychiatric.tenancy.UnscopedQuery;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -37,13 +38,28 @@ public interface ReleaseBundleRepository extends JpaRepository<ReleaseBundle, Lo
     Optional<ReleaseBundle> findByAppointmentId(Long appointmentId);
 
     @UnscopedQuery(value = UnscopedQuery.Reason.KEYED_BY_SCOPED_PARENT,
-            detail = "keyed by centre appointment id, which the caller resolved "
-                    + "through a centre-scoped lookup before reaching this")
-    @Query("""
-           select n from CentreConsultationNote n
-             join n.centreConsultation c
-            where c.centreAppointment.id = :centreAppointmentId
-              and n.supersededAt is null
-           """)
+            detail = "centreAppointmentId comes from a CentreAppointment resolved by the "
+                    + "consulting doctor in CentreClinicalService")
     Optional<ReleaseBundle> findByCentreAppointmentId(Long centreAppointmentId);
+
+    /**
+     * The FNPH release desk: every hospital bundle in the given states, oldest
+     * first because the wait is the patient's.
+     *
+     * The inner join on appointment is what keeps centre bundles off this desk;
+     * those belong to the centre pathway. Appointment and patient are fetched
+     * because the desk shows who each bundle is for, and open-in-view is off.
+     */
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "Hub Coordinator's release desk across the FNPH pathway; guarded by "
+                    + "release_bundle.read, which no centre role holds")
+    @Query("""
+           select b from ReleaseBundle b
+           join fetch b.appointment a
+           join fetch a.patient
+           left join fetch a.doctor
+           where b.status in :statuses
+           order by b.createdAt asc
+           """)
+    List<ReleaseBundle> findFnphDesk(@Param("statuses") Collection<BundleStatus> statuses);
 }

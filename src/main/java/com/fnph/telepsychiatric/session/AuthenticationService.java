@@ -162,7 +162,7 @@ public class AuthenticationService {
         SecurityUser principal = (SecurityUser) userDetailsService.loadUserByUsername(user.getUsername());
 
         return LoginResponse.authenticated(
-                jwtService.generateAccessToken(principal),
+                jwtService.generateAccessToken(principal, session.getPublicId()),
                 session.getTransientRawToken(),
                 jwtService.getAccessTokenMinutes() * 60,
                 principal);
@@ -234,11 +234,25 @@ public class AuthenticationService {
         }
         Users user = found.get();
 
-        if (user.getStatus() != UserStatus.ACTIVE || user.getEmailVerifiedAt() == null) {
+        // A patient account from online enrolment carries a placeholder address
+        // and no verified-at, so every patient reset was silently skipped, and a
+        // link would have gone nowhere. The address on the patient record is the
+        // one the enrolment code was proved on: that is where the link goes.
+        String sendTo = user.getEmail();
+        boolean verified = user.getEmailVerifiedAt() != null;
+        if (user.getPatient() != null) {
+            String patientEmail = user.getPatient().getEmail();
+            boolean real = patientEmail != null && patientEmail.contains("@")
+                    && !patientEmail.trim().toLowerCase().endsWith(".local");
+            sendTo = real ? patientEmail.trim() : null;
+            verified = real;
+        }
+
+        if (user.getStatus() != UserStatus.ACTIVE || !verified || sendTo == null) {
             // An unverified address may be a typo made when the account was
             // created. Sending a reset link there would hand the account to
             // whoever owns that address.
-            log.info("Password reset skipped for {}: account not active or address unverified",
+            log.info("Password reset skipped for {}: account not active or no verified address",
                     user.getPublicId());
             return;
         }
@@ -246,7 +260,7 @@ public class AuthenticationService {
         String raw = issueToken(user, AccountTokenPurpose.PASSWORD_RESET,
                 LocalDateTime.now().plusMinutes(properties.getPasswordResetTokenMinutes()), context);
 
-        emailService.sendPasswordReset(user.getEmail(), user.getFullName(), raw,
+        emailService.sendPasswordReset(sendTo, user.getFullName(), raw,
                 LocalDateTime.now().plusMinutes(properties.getPasswordResetTokenMinutes()),
                 context.ipAddress());
     }
@@ -309,11 +323,7 @@ public class AuthenticationService {
         userRepository.save(user);
 
         // Keeps the current device signed in; ends every other one.
-        sessionService.revokeAll(
-                user.getId(),
-                CurrentSession.id().orElse(null),
-                "Password changed"
-        );
+        sessionService.revokeAll(user.getId(), CurrentSession.id().orElse(null), "Password changed");
 
         emailService.sendPasswordChanged(user.getEmail(), user.getFullName(), now, context.ipAddress());
     }
@@ -353,7 +363,7 @@ public class AuthenticationService {
         record(user.getUsername(), user, LoginOutcome.SUCCESS, null, context);
 
         return LoginResponse.authenticated(
-                jwtService.generateAccessToken(principal),
+                jwtService.generateAccessToken(principal, session.getPublicId()),
                 session.getTransientRawToken(),
                 jwtService.getAccessTokenMinutes() * 60,
                 principal);
@@ -394,7 +404,7 @@ public class AuthenticationService {
         }
         return ipAddress != null
                 && loginAttemptRepository.countRecentFailuresForIp(ipAddress, since)
-                        >= properties.getMaxFailedAttemptsPerIp();
+                >= properties.getMaxFailedAttemptsPerIp();
     }
 
     private void applyLockoutIfNeeded(Users user, String identifier) {

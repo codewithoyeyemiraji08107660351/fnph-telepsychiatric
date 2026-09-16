@@ -24,6 +24,8 @@ public interface ProfessionalReviewRepository extends JpaRepository<Professional
      */
     @Query("""
            select r from ProfessionalReview r
+           left join fetch r.prescription
+           left join fetch r.investigation
            where r.reviewer.id = :reviewerId and r.submittedAt is null
            order by r.assignedAt asc
            """)
@@ -32,6 +34,8 @@ public interface ProfessionalReviewRepository extends JpaRepository<Professional
     /** Concerns waiting on the Hub Coordinator. Never routed back to the doctor. */
     @Query("""
            select r from ProfessionalReview r
+           left join fetch r.prescription
+           left join fetch r.investigation
            where r.queryRaised = true and r.submittedToHubAt is not null
            order by r.submittedToHubAt asc
            """)

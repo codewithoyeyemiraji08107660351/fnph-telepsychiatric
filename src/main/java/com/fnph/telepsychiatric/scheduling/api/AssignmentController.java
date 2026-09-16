@@ -64,6 +64,7 @@ public class AssignmentController {
                             + "the whole slot.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<Map<String, Object>> assignDoctor(
             @PathVariable String appointmentPublicId,
             @Parameter(required = true) @RequestParam String doctorPublicId) {

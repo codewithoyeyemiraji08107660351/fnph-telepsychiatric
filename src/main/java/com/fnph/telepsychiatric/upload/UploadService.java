@@ -41,6 +41,7 @@ import java.util.List;
 @Slf4j
 public class UploadService {
 
+    private final com.fnph.telepsychiatric.center.CenterRepository centreRepository;
     private final FileUploadRepository uploadRepository;
     private final PatientRepository patientRepository;
     private final StorageService storageService;
@@ -85,6 +86,11 @@ public class UploadService {
             if (principal.getPatientId() != null) {
                 patientRepository.findById(principal.getPatientId())
                         .ifPresent(upload::setPatient);
+            }
+            // Tenant key. Without it a centre's own file had no centre, and the
+            // read check refused the centre that uploaded it.
+            if (principal.getCentreId() != null) {
+                centreRepository.findById(principal.getCentreId()).ifPresent(upload::setCentre);
             }
         });
 
@@ -131,6 +137,25 @@ public class UploadService {
                 ? uploadRepository.findAllByPatientIdOrderByUploadedAtDesc(patientId)
                 : uploadRepository.findAllByUploadedByOrderByUploadedAtDesc(
                         CurrentUser.usernameOrSystem());
+    }
+
+    /**
+     * Files attached to one appointment or referral, for the staff preparing it.
+     * Each row passes the same check as reading it one at a time, so a centre
+     * sees only its own and a patient only theirs.
+     */
+    @Transactional(readOnly = true)
+    public List<FileUpload> forReference(String referenceId) {
+        return uploadRepository.findAllByReferenceIdOrderByUploadedAtDesc(referenceId).stream()
+                .filter(upload -> {
+                    try {
+                        assertReadable(upload);
+                        return true;
+                    } catch (UploadException refused) {
+                        return false;
+                    }
+                })
+                .toList();
     }
 
     @Transactional

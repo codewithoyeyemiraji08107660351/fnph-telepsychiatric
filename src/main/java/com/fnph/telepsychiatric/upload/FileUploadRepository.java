@@ -36,4 +36,9 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
             detail = "GET /admin/uploads/quarantined is guarded by upload.quarantine, held by "
                     + "ICT and the Central Administrator only")
     List<FileUpload> findAllByScanStatusOrderByUploadedAtDesc(ScanStatus scanStatus);
+
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "Files attached to one appointment or referral; every row is passed "
+                    + "through UploadService.assertReadable before it is returned")
+    List<FileUpload> findAllByReferenceIdOrderByUploadedAtDesc(String referenceId);
 }

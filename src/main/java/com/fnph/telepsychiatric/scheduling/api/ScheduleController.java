@@ -108,6 +108,8 @@ public class ScheduleController {
                     **Requires** `schedule.read`.
                     """)
     @ApiResponse(responseCode = "200", description = "Slots returned in time order.")
+    // Rows read each slot's room, which is lazy.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> slots(@PathVariable String publicationPublicId) {
         return ResponseEntity.ok(scheduleService.slotsOf(publicationPublicId).stream()
                 .map(s -> {

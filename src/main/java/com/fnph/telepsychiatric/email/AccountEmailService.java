@@ -55,6 +55,7 @@ public class AccountEmailService {
     @Value("${application.notification.email.from-name}")
     private String fromName;
 
+    // Links a person opens in a browser point at the portal, not the API host.
     @Value("${application.portal-url:${application.base-url}}")
     private String baseUrl;
 
@@ -152,6 +153,23 @@ public class AccountEmailService {
 
         send(toAddress, "Your FNPH Telepsychiatry account has been deactivated",
                 "email/account-deactivated", context);
+    }
+
+    /**
+     * A notification, by email.
+     *
+     * The message is the notification's own text, which is written without
+     * clinical detail; the link leads to the signed-in portal for the rest.
+     */
+    @Async
+    public void sendNotification(String toAddress, String recipientName, String subject,
+                                 String message, String link) {
+        Context context = baseContext();
+        context.setVariable("recipientName", recipientName == null || recipientName.isBlank() ? "there" : recipientName);
+        context.setVariable("message", message == null ? "" : message);
+        context.setVariable("link", link);
+        send(toAddress, subject == null || subject.isBlank() ? "An update from FNPH Kaduna" : subject,
+                "email/notification", context);
     }
 
     private Context baseContext() {

@@ -16,6 +16,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -39,6 +41,12 @@ public class JwtService {
     public static final String CLAIM_ROLE = "role";
     public static final String CLAIM_CENTRE_ID = "centreId";
     public static final String CLAIM_USER_ID = "uid";
+    /** Public id of the UserSession the access token was minted for. */
+    public static final String CLAIM_SESSION_ID = "sid";
+
+    /** What the authentication filter needs from a valid access token. */
+    public record AccessToken(String username, Long userId, String sessionPublicId) {
+    }
 
     private final JwtProperties properties;
 
@@ -55,12 +63,19 @@ public class JwtService {
      * revoked by an administrator would keep working until the token expired.
      * Permissions are resolved per request from the database, which is a single
      * indexed query.
+     *
+     * The session id binds the token to one signed-in device. The filter
+     * refuses the token once that session is revoked, expired or idle, so
+     * signing a device out takes effect on its next request rather than when
+     * the token runs out.
      */
-    public String generateAccessToken(SecurityUser user) {
+    public String generateAccessToken(SecurityUser user, String sessionPublicId) {
+        Objects.requireNonNull(sessionPublicId, "An access token must be bound to a session");
         Map<String, Object> claims = new HashMap<>();
         claims.put(CLAIM_TOKEN_TYPE, TokenType.ACCESS.name());
         claims.put(CLAIM_ROLE, user.getPrimaryRole());
         claims.put(CLAIM_USER_ID, user.getUserId());
+        claims.put(CLAIM_SESSION_ID, sessionPublicId);
         if (user.getCentreId() != null) {
             claims.put(CLAIM_CENTRE_ID, user.getCentreId());
         }
@@ -110,6 +125,31 @@ public class JwtService {
 
     public String extractTokenId(String token) {
         return parse(token).getId();
+    }
+
+    /**
+     * Parses and type-checks an access token.
+     *
+     * Empty for anything that is not a signed, unexpired ACCESS token from this
+     * issuer. The session claim may be null on a token minted before sessions
+     * were bound; the filter refuses those.
+     */
+    public Optional<AccessToken> parseAccessToken(String token) {
+        try {
+            Claims claims = parse(token);
+            if (!TokenType.ACCESS.name().equals(claims.get(CLAIM_TOKEN_TYPE, String.class))) {
+                return Optional.empty();
+            }
+            Object uid = claims.get(CLAIM_USER_ID);
+            Object sid = claims.get(CLAIM_SESSION_ID);
+            return Optional.of(new AccessToken(
+                    claims.getSubject(),
+                    uid instanceof Number n ? n.longValue() : null,
+                    sid instanceof String value ? value : null));
+        } catch (JwtException | IllegalArgumentException ex) {
+            log.debug("Rejected token: {}", ex.getMessage());
+            return Optional.empty();
+        }
     }
 
     public boolean isAccessTokenValid(String token, UserDetails userDetails) {

@@ -72,4 +72,9 @@ public interface CentreReferralRepository extends JpaRepository<CentreReferral, 
      * disclosed how busy the other 22 centres are.
      */
     long countByCentreIdAndStatus(Long centreId, ReferralStatus status);
+
+    /** One centre's referrals, newest first. Scoped by the centre in the signature. */
+    List<CentreReferral> findAllByCentreIdOrderByCreatedAtDesc(Long centreId);
+
+    List<CentreReferral> findAllByCentreIdAndStatusOrderByCreatedAtDesc(Long centreId, ReferralStatus status);
 }

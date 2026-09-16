@@ -284,6 +284,7 @@ public class EhrImportService {
                 record.setFullName(fullName);
                 record.setDateOfBirthHash(Tokens.hash(dateOfBirth.toString()));
                 record.setDateOfBirthMasked(maskDate(dateOfBirth));
+                record.setDateOfBirthEncrypted(secretEncryptor.encrypt(dateOfBirth.toString()));
 
                 if (normalisedPhone != null) {
                     record.setPhoneHash(Tokens.hash(normalisedPhone));

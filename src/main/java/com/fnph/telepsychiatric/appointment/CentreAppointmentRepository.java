@@ -81,4 +81,30 @@ public interface CentreAppointmentRepository extends JpaRepository<CentreAppoint
     long countByStatus(Status status);
 
     long countByCentreIdAndStatus(Long centreId, Status status);
+
+    /** One centre's appointments from a point in time, soonest first. Scoped by the centre in the signature. */
+    List<CentreAppointment> findAllByCentreIdAndAppointmentDateAfterOrderByAppointmentDateAsc(
+            Long centreId, java.time.LocalDateTime from);
+
+    /**
+     * One doctor's centre consultations, soonest first, with the centre and the
+     * centre patient loaded for the worklist row.
+     */
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "The consulting doctor's own worklist across centres; the doctor is "
+                    + "hospital-scoped and the query is constrained to their own assignments")
+    @org.springframework.data.jpa.repository.Query("""
+           select a from CentreAppointment a
+           join fetch a.centre
+           join fetch a.centrePatient
+           left join fetch a.referral
+           where a.doctor.id = :doctorId
+             and a.status in :statuses
+             and a.appointmentDate >= :from
+           order by a.appointmentDate asc
+           """)
+    List<CentreAppointment> findDoctorWorklist(
+            @org.springframework.data.repository.query.Param("doctorId") Long doctorId,
+            @org.springframework.data.repository.query.Param("statuses") java.util.Collection<Status> statuses,
+            @org.springframework.data.repository.query.Param("from") java.time.LocalDateTime from);
 }

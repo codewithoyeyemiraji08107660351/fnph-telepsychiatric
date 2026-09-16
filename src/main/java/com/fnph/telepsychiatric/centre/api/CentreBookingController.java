@@ -160,6 +160,8 @@ public class CentreBookingController {
 
     @GetMapping("/api/v1/hub/centre-approvals")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_READ)")
+    // Rows read the centre, the patient and the referral, all lazy.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     @Operation(
             summary = "Centre consultation requests awaiting a decision",
             description = """

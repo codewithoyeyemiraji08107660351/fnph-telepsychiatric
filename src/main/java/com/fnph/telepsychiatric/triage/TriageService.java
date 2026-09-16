@@ -266,6 +266,44 @@ public class TriageService {
         return consentDocuments.save(document);
     }
 
+    @Transactional
+    public TriageQuestionSet publishQuestions(String setPublicId) {
+        TriageQuestionSet set = questionSets.findByPublicId(setPublicId)
+                .orElseThrow(() -> new TriageException("No such question set"));
+
+        if (set.getQuestions().stream()
+                .anyMatch(q -> q.getQuestionText().contains("PLACEHOLDER"))) {
+            throw new TriageException(
+                    "Those questions still contain PLACEHOLDER text. The wording decides which "
+                            + "patients are turned away from a psychiatric service, so it has to "
+                            + "be FNPH's own.");
+        }
+
+        questionSets.findFirstByAudienceAndStatusOrderByEffectiveFromDesc(
+                set.getAudience(), "PUBLISHED").ifPresent(previous -> {
+            previous.setStatus("RETIRED");
+            previous.setRetiredAt(LocalDateTime.now());
+            questionSets.save(previous);
+        });
+
+        set.setStatus("PUBLISHED");
+        set.setEffectiveFrom(LocalDateTime.now());
+        return questionSets.save(set);
+    }
+
+    /**
+     * Refuses a booking unless the patient has accepted the current consent and
+     * the most recent triage, on the current question set, said PROCEED.
+     *
+     * The stop screen in the patient app was the only thing enforcing this, so
+     * anyone calling the booking API directly skipped the safety questions.
+     * The most recent response decides, not the most recent PROCEED: a patient
+     * who passed last month and stopped today must not book on the old answer.
+     *
+     * How long a PROCEED stays valid is not decided here. That is an FNPH
+     * clinical governance question; until it is answered, a new question set
+     * version is what forces a fresh triage.
+     */
     @Transactional(readOnly = true)
     public void requireClearedForBooking(Long patientId, String audience) {
         String consentVersion = activeConsent(audience).getVersion();
@@ -290,31 +328,6 @@ public class TriageService {
                     "Your answers mean a video appointment is not right for you now. "
                             + "Please use the emergency contact shown to you.");
         }
-    }
-
-    @Transactional
-    public TriageQuestionSet publishQuestions(String setPublicId) {
-        TriageQuestionSet set = questionSets.findByPublicId(setPublicId)
-                .orElseThrow(() -> new TriageException("No such question set"));
-
-        if (set.getQuestions().stream()
-                .anyMatch(q -> q.getQuestionText().contains("PLACEHOLDER"))) {
-            throw new TriageException(
-                    "Those questions still contain PLACEHOLDER text. The wording decides which "
-                            + "patients are turned away from a psychiatric service, so it has to "
-                            + "be FNPH's own.");
-        }
-
-        questionSets.findFirstByAudienceAndStatusOrderByEffectiveFromDesc(
-                set.getAudience(), "PUBLISHED").ifPresent(previous -> {
-            previous.setStatus("RETIRED");
-            previous.setRetiredAt(LocalDateTime.now());
-            questionSets.save(previous);
-        });
-
-        set.setStatus("PUBLISHED");
-        set.setEffectiveFrom(LocalDateTime.now());
-        return questionSets.save(set);
     }
 
     public static class TriageException extends RuntimeException {

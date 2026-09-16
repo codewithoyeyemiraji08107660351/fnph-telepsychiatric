@@ -83,8 +83,8 @@ public class EhrVerificationService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String GENERIC_FAILURE =
-            "We could not match those details. Check the number and the date of birth exactly "
-                    + "as they appear on your hospital card, or request help below.";
+            "We could not match that hospital number. Check it exactly as it appears on your "
+                    + "hospital card, or request help below.";
 
     private final EhrImportRepository importRepository;
     private final EhrRecordRepository recordRepository;
@@ -116,11 +116,21 @@ public class EhrVerificationService {
     @Value("${application.security.enrolment.max-code-attempts:5}")
     private int maxCodeAttempts;
 
+    /**
+     * FNPH enrols patients by EHR number alone: the one-time code sent to the
+     * contact on the hospital record is the proof of identity. Set true to also
+     * require a date of birth or the last four phone digits.
+     */
+    @Value("${application.security.enrolment.require-corroboration:false}")
+    private boolean requireCorroboration;
+
     // -----------------------------------------------------------------
     // Step 1: lookup
     // -----------------------------------------------------------------
 
-    @Transactional
+    // noRollbackFor: every refusal throws, and rolling back discarded the failed
+    // attempt just recorded, so the rate limit never counted a single failure.
+    @Transactional(noRollbackFor = EnrolmentException.class)
     public EnrolmentLookupResponse lookup(EnrolmentLookupRequest request,
                                           String ipAddress, String userAgent) {
         String ehrNumber = request.ehrNumber().trim();
@@ -206,7 +216,9 @@ public class EhrVerificationService {
         // and nothing ever wrote it, so every row claimed email regardless of
         // what happened.
         verification.setDeliveryRoute(deliveryRoute);
-        verification.setDestinationMasked(destinationMasked);
+        // The column holds 50; a long email domain made the save fail with a 500.
+        verification.setDestinationMasked(destinationMasked != null && destinationMasked.length() > 50
+                ? destinationMasked.substring(0, 47) + "..." : destinationMasked);
         verification.setCodeHash(Tokens.hash(code));
         verification.setExpiresAt(LocalDateTime.now().plusMinutes(codeMinutes));
         verification.setIpAddress(ipAddress);
@@ -225,12 +237,16 @@ public class EhrVerificationService {
                     ehrNumber, destinationMasked, code);
         }
 
+        // Without a date of birth or phone digits, the caller has shown only an EHR
+        // number. Returning the name, birth year and clinic would tell anyone who
+        // guesses a number who is a patient here. Only where the code went.
+        boolean corroborated = request.dateOfBirth() != null || request.phoneLastFour() != null;
         return new EnrolmentLookupResponse(
                 saved.getPublicId(),
-                snapshot.getFullName(),
-                snapshot.getDateOfBirthMasked(),
+                corroborated ? snapshot.getFullName() : null,
+                corroborated ? snapshot.getDateOfBirthMasked() : null,
                 destinationMasked,
-                snapshot.getClinic(),
+                corroborated ? snapshot.getClinic() : null,
                 verification.getExpiresAt(),
                 active.get().getSourceAsAt(),
                 active.get().ageInDays());
@@ -246,23 +262,31 @@ public class EhrVerificationService {
      * A record carrying an email and no phone leaves date of birth as the only
      * option, which is the stronger factor and therefore not a loss.
      */
+    /**
+     * Anything the patient supplies must match. Supplying nothing is accepted
+     * unless corroboration is required: the code sent to the contact on the
+     * hospital record is what proves identity.
+     */
     private boolean corroborates(EhrVerificationRecord snapshot, EnrolmentLookupRequest request) {
         if (request.dateOfBirth() != null) {
             return Tokens.hash(request.dateOfBirth().toString())
                     .equals(snapshot.getDateOfBirthHash());
         }
-        if (request.phoneLastFour() != null && snapshot.getPhoneMasked() != null) {
-            String stored = snapshot.getPhoneMasked();
-            return stored.endsWith(request.phoneLastFour().trim());
+        if (request.phoneLastFour() != null) {
+            return snapshot.getPhoneMasked() != null
+                    && snapshot.getPhoneMasked().endsWith(request.phoneLastFour().trim());
         }
-        return false;
+        return !requireCorroboration;
     }
 
     // -----------------------------------------------------------------
     // Steps 2 and 3: verify the code, then activate
     // -----------------------------------------------------------------
 
-    @Transactional
+    // noRollbackFor: a wrong code increments the attempt count and then throws.
+    // Rolling back undid the increment, so the attempt limit never triggered and
+    // every six-digit code could be tried.
+    @Transactional(noRollbackFor = EnrolmentException.class)
     public void activate(CompleteEnrolmentRequest request, String ipAddress) {
         ContactVerification verification = contactRepository
                 .findByPublicId(request.verificationPublicId())
@@ -308,6 +332,11 @@ public class EhrVerificationService {
         patient.setFirstName(nameParts[0]);
         patient.setLastName(nameParts.length > 1 ? nameParts[1] : nameParts[0]);
         patient.setDateOfBirth(dateOfBirthFor(verification, snapshot));
+        // The address the code was just proved on. Notification emails go to the
+        // patient record, which was left without it.
+        if (snapshot.getEmailEncrypted() != null) {
+            patient.setEmail(secretEncryptor.decrypt(snapshot.getEmailEncrypted()));
+        }
         patient.setSourceImportId(active.getId());
         patient.setIsEligible(true);
         patient.setIsPhysicallyAssessed(true);
@@ -383,6 +412,13 @@ public class EhrVerificationService {
                                      EhrVerificationRecord snapshot) {
         if (verification.getCorroboratedDateOfBirth() != null) {
             return verification.getCorroboratedDateOfBirth();
+        }
+        if (snapshot.getDateOfBirthEncrypted() != null) {
+            try {
+                return LocalDate.parse(secretEncryptor.decrypt(snapshot.getDateOfBirthEncrypted()));
+            } catch (RuntimeException e) {
+                log.warn("Could not read the stored date of birth for {}: {}", snapshot.getEhrNumber(), e.getMessage());
+            }
         }
         int year = Integer.parseInt(snapshot.getDateOfBirthMasked().substring(6));
         log.warn("Patient {} enrolled by phone corroboration. Date of birth recorded as "

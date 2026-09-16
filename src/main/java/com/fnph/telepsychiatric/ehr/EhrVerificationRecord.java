@@ -63,4 +63,12 @@ public class EhrVerificationRecord extends BaseEntity {
 
     @Column(name = "email_encrypted", length = 512)
     private String emailEncrypted;
+
+    /**
+     * The real date of birth, encrypted like the email. The hash above only
+     * checks a date someone typed; enrolment by EHR number alone needs the
+     * date itself, or every patient record would carry a 1 January placeholder.
+     */
+    @Column(name = "date_of_birth_encrypted", length = 512)
+    private String dateOfBirthEncrypted;
 }

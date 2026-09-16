@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: html(body=~{::body-content})}">
+<body>
+<div th:fragment="body-content">
+
+    <p style="margin:0 0 16px;">Hello <span th:text="${recipientName}">Aisha</span>,</p>
+
+    <p style="margin:0 0 20px;white-space:pre-line;" th:text="${message}">
+        Your appointment request has been approved.
+    </p>
+
+    <p th:if="${link != null}" style="margin:0 0 24px;">
+        <a th:href="${link}"
+           style="display:inline-block;background:#0f5132;color:#ffffff;text-decoration:none;
+                  padding:12px 20px;border-radius:6px;font-weight:bold;">Sign in to see details</a>
+    </p>
+
+    <p style="margin:0;font-size:13px;color:#6c757d;">
+        For your privacy, details are shown only after you sign in.
+        This service is not for emergencies. If you are in crisis, call
+        <span th:text="${emergencyNumber}">0803 272 2243</span>.
+    </p>
+
+</div>
+</body>
+</html>

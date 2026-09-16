@@ -45,6 +45,7 @@ public class CentreReferralService {
     private final CentreWalletService walletService;
     private final InAppNotificationService notifications;
     private final AuditService auditService;
+    private final com.fnph.telepsychiatric.triage.TriageService triageService;
 
     @Transactional
     public CentreReferral create(Center centre, CentrePatient patient, ReferralDetails details) {
@@ -92,6 +93,14 @@ public class CentreReferralService {
             throw new IllegalArgumentException(
                     "Record the consent version and who at the centre witnessed the patient "
                             + "consenting.");
+        }
+        // The version must be the published centre consent. Anything else is a
+        // record that the patient agreed to a text that does not exist.
+        String published = triageService.activeConsent("CENTRE").getVersion();
+        if (!published.equals(consentVersion)) {
+            throw new IllegalArgumentException(
+                    "The consent text has changed. Read the current version to the patient "
+                            + "and submit again.");
         }
 
         LocalDateTime now = LocalDateTime.now();

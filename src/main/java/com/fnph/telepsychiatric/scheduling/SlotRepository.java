@@ -63,6 +63,11 @@ public interface SlotRepository extends JpaRepository<Slot, Long> {
 
     long countByPublicationIdAndState(Long publicationId, SlotState state);
 
+    /** A room's future slots in one state, for taking the room out of service. */
+    List<Slot> findAllByRoomIdAndStateAndStartAtAfter(Long roomId, SlotState state, LocalDateTime after);
+
+    long countByRoomIdAndStateInAndStartAtAfter(Long roomId, java.util.Collection<SlotState> states, LocalDateTime after);
+
     /** Returns lapsed holds to the pool. Run on a schedule. */
     @Modifying
     @Query("""

@@ -1,6 +1,5 @@
 package com.fnph.telepsychiatric.clinical.api;
 
-import com.fnph.telepsychiatric.appointment.Appointment;
 import com.fnph.telepsychiatric.appointment.AppointmentRepository;
 import com.fnph.telepsychiatric.appointment.Status;
 import com.fnph.telepsychiatric.clinical.*;
@@ -14,13 +13,11 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Reading clinical output, and the two work queues that had no endpoint.
@@ -33,6 +30,12 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/clinical")
 @RequiredArgsConstructor
+// Every method here is a read that maps entities after loading them: patient
+// names on queue rows, items on a prescription. open-in-view is off, so without
+// a transaction spanning the mapping each of those lazy reads threw
+// LazyInitializationException and the endpoint answered 500 as soon as it had
+// a row. Read-only, and safe at class level because nothing here writes.
+@Transactional(readOnly = true)
 @Tag(name = "Clinical Records")
 public class ClinicalReadController {
 
@@ -44,6 +47,8 @@ public class ClinicalReadController {
     private final IssuedDocumentRepository documentRepository;
     private final WorkQueueService workQueueService;
     private final VitalsService vitalsService;
+    private final ReleaseBundleRepository releaseBundleRepository;
+    private final ReleaseService releaseService;
 
     @GetMapping("/prescriptions/mine")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).PRESCRIPTION_READ_OWN)")
@@ -191,6 +196,138 @@ public class ClinicalReadController {
     // Work queues
     // -----------------------------------------------------------------
 
+    @GetMapping("/consultations/{consultationPublicId}/record")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CLINICAL_NOTE_READ)")
+    @Operation(
+            summary = "What this consultation has produced so far",
+            description = """
+                    The release bundle's component states, and the prescriptions,
+                    investigation requests and follow-up recommendations already issued
+                    from this consultation.
+
+                    **The authoring screen needs this to be safe.** Without it, a clinician
+                    who reloads the page cannot tell whether a prescription was already
+                    issued, and issuing it again puts two in front of the pharmacist and
+                    the patient. Each component ends up issued or recorded as not required,
+                    and this is where the screen reads which.
+
+                    Headings only: issue number, status and item count. The contents are
+                    read through the prescription and investigation endpoints.
+
+                    **Requires** `clinical_note.read`.
+                    """)
+    @ApiResponse(responseCode = "200", description = "The consultation's record so far.")
+    public ResponseEntity<Map<String, Object>> consultationRecord(@PathVariable String consultationPublicId) {
+        var consultation = consultationRepository.findByPublicId(consultationPublicId)
+                .orElseThrow(() -> new EntityNotFoundException("No such consultation"));
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("consultationPublicId", consultation.getPublicId());
+        var appointment = consultation.getAppointment();
+        var bundle = appointment == null ? null
+                : releaseBundleRepository.findByAppointmentId(appointment.getId()).orElse(null);
+        if (bundle == null) {
+            body.put("bundle", null);
+            body.put("components", List.of());
+            body.put("prescriptions", List.of());
+            body.put("investigations", List.of());
+            body.put("followUps", List.of());
+            return ResponseEntity.ok(body);
+        }
+        body.put("bundle", Map.of(
+                "publicId", bundle.getPublicId(),
+                "status", bundle.getStatus().name()));
+        body.put("components", releaseService.componentsOf(bundle.getId()).stream().map(c -> {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("componentType", c.getComponentType().name());
+            row.put("complete", Boolean.TRUE.equals(c.getIsComplete()));
+            row.put("notRequired", Boolean.TRUE.equals(c.getNotRequired()));
+            row.put("notRequiredReason", c.getNotRequiredReason());
+            row.put("settled", c.isSettled());
+            return row;
+        }).toList());
+        body.put("prescriptions", prescriptionRepository.findAllByBundleId(bundle.getId()).stream()
+                .map(p -> documentHeading(p.getPublicId(), p.getIssueNumber(), p.getStatus().name(),
+                        p.getItems().size(), p.getSupersedesId() != null))
+                .toList());
+        body.put("investigations", investigationRepository.findAllByBundleId(bundle.getId()).stream()
+                .map(i -> documentHeading(i.getPublicId(), i.getIssueNumber(), i.getStatus().name(),
+                        i.getItems().size(), i.getSupersedesId() != null))
+                .toList());
+        body.put("followUps", followUpRepository.findAllByBundleId(bundle.getId()).stream().map(f -> {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("publicId", f.getPublicId());
+            row.put("recommendation", f.getRecommendation());
+            row.put("reviewInterval", f.getReviewInterval());
+            return row;
+        }).toList());
+        return ResponseEntity.ok(body);
+    }
+
+    private static Map<String, Object> documentHeading(String publicId, String issueNumber, String status,
+                                                       int itemCount, boolean supersedes) {
+        Map<String, Object> row = new java.util.LinkedHashMap<>();
+        row.put("publicId", publicId);
+        row.put("issueNumber", issueNumber);
+        row.put("status", status);
+        row.put("itemCount", itemCount);
+        row.put("supersedesAnother", supersedes);
+        return row;
+    }
+
+    @GetMapping("/queues/doctor")
+    // A read, scoped to the caller. consultation.read rather than the join
+    // permission, so a supervised view of a doctor can show the worklist.
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CONSULTATION_READ)")
+    @Operation(
+            summary = "Your consultations",
+            description = """
+                    Approved and in-progress appointments assigned to you, soonest first,
+                    with how far nursing and records preparation have got.
+
+                    **This is the doctor's worklist, and it did not exist.** Joining a room
+                    needs the appointment's public identifier, and until now the only way
+                    to get one was the link in the assignment notification.
+
+                    No clinical content. The note, prescriptions and investigations are
+                    read from the consultation once it is open.
+
+                    **Requires** `consultation.read`. Scoped to the caller.
+                    """)
+    @ApiResponse(responseCode = "200", description = "Your consultations, soonest first.")
+    public ResponseEntity<List<Map<String, Object>>> doctorQueue() {
+        Long userId = CurrentUser.require().getUserId();
+        // Finished consultations stay for two weeks. The session clock moves an
+        // appointment to COMPLETED or NO_SHOW at the scheduled end, and the
+        // doctor still has the note and the components to finish.
+        List<com.fnph.telepsychiatric.appointment.Appointment> mine = appointmentRepository.findDoctorWorklist(
+                userId,
+                List.of(Status.APPROVED, Status.IN_PROGRESS, Status.COMPLETED, Status.NO_SHOW),
+                java.time.LocalDateTime.now().minusDays(14));
+        return ResponseEntity.ok(mine.stream().map(a -> {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("appointmentPublicId", a.getPublicId());
+            row.put("reference", a.getReference());
+            row.put("status", a.getStatus().name());
+            row.put("appointmentDate", a.getAppointmentDate());
+            row.put("scheduledEndAt", a.getScheduledEndAt());
+            row.put("room", a.getRoom());
+            row.put("patientName", a.getPatient().getFirstName() + " "
+                    + a.getPatient().getLastName());
+            row.put("ehrNumber", a.getPatient().getEhrNumber());
+            row.put("nursingState",
+                    workQueueService.stateOf(a, WorkQueueService.Queue.NURSING).name());
+            row.put("himState",
+                    workQueueService.stateOf(a, WorkQueueService.Queue.HIM).name());
+            row.put("vitalsRecorded", !vitalsService.forAppointment(a.getId()).isEmpty());
+            // Present once the room has been opened. After the scheduled end the
+            // room refuses a join, and this is how the doctor reaches the record.
+            row.put("consultationPublicId", consultationRepository.findByAppointmentId(a.getId())
+                    .map(com.fnph.telepsychiatric.consultation.Consultation::getPublicId)
+                    .orElse(null));
+            return row;
+        }).toList());
+    }
+
     @GetMapping("/queues/nursing")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).QUEUE_NURSING)")
     @Operation(
@@ -252,6 +389,8 @@ public class ClinicalReadController {
                 .orElseThrow(() -> new EntityNotFoundException("No document with that number"));
 
         Map<String, Object> row = new java.util.LinkedHashMap<>();
+        // The id revoke takes. Without it a document found here could not be revoked.
+        row.put("publicId", d.getPublicId());
         row.put("issueNumber", d.getIssueNumber());
         row.put("documentType", d.getDocumentType().name());
         row.put("status", d.effectiveStatus(java.time.LocalDateTime.now()).name());
@@ -261,90 +400,6 @@ public class ClinicalReadController {
         row.put("maxDownloads", d.getMaxDownloads());
         row.put("revokedReason", d.getRevokedReason());
         return ResponseEntity.ok(row);
-    }
-
-    @GetMapping("/queues/doctor")
-    @PreAuthorize("""
-        hasAuthority(
-            T(com.fnph.telepsychiatric.authz.Permissions)
-                .CONSULTATION_JOIN_AS_DOCTOR
-        )
-        """)
-    @Operation(
-            summary = "Your consultations",
-            description = """
-                Approved and in-progress appointments assigned to the
-                authenticated doctor, soonest first.
-
-                No clinical note, prescription or investigation content
-                is returned by this endpoint.
-                """)
-    @ApiResponse(
-            responseCode = "200",
-            description = "Your consultations, soonest first.")
-    public ResponseEntity<List<Map<String, Object>>> doctorQueue() {
-
-        Long userId = CurrentUser.require().getUserId();
-
-        List<Appointment> appointments =
-                appointmentRepository.findDoctorQueue(
-                        userId,
-                        List.of(Status.IN_PROGRESS, Status.APPROVED));
-
-        List<Map<String, Object>> rows = appointments.stream()
-                .map(a -> {
-
-                    Map<String, Object> row = new LinkedHashMap<>();
-
-                    row.put("appointmentPublicId", a.getPublicId());
-                    row.put("reference", a.getReference());
-                    row.put("status", a.getStatus().name());
-                    row.put("appointmentDate", a.getAppointmentDate());
-                    row.put("scheduledEndAt", a.getScheduledEndAt());
-                    row.put("room", a.getRoom());
-
-                    row.put(
-                            "patientName",
-                            a.getPatient().getFirstName()
-                                    + " "
-                                    + a.getPatient().getLastName()
-                    );
-
-                    row.put(
-                            "ehrNumber",
-                            a.getPatient().getEhrNumber()
-                    );
-
-                    row.put(
-                            "nursingState",
-                            workQueueService
-                                    .stateOf(
-                                            a,
-                                            WorkQueueService.Queue.NURSING)
-                                    .name()
-                    );
-
-                    row.put(
-                            "himState",
-                            workQueueService
-                                    .stateOf(
-                                            a,
-                                            WorkQueueService.Queue.HIM)
-                                    .name()
-                    );
-
-                    Set<Long> appointmentIds = appointments.stream()
-                            .map(Appointment::getId)
-                            .collect(Collectors.toSet());
-
-                    Set<Long> appointmentsWithVitals =
-                            vitalsService.appointmentsWithVitals(appointmentIds);
-
-                    return row;
-                })
-                .toList();
-
-        return ResponseEntity.ok(rows);
     }
 
     private List<Map<String, Object>> queueFor(String role) {

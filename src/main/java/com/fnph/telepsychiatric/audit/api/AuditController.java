@@ -52,6 +52,8 @@ public class AuditController {
                     **Requires** `audit.read`, held only by the Central Administrator.
                     """)
     @ApiResponse(responseCode = "200", description = "Matching entries, newest first.")
+    // Entries name the effective principal of a supervised action, a lazy association.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<Page<AuditEntryResponse>> search(
             @Parameter(description = "Filter by action.", example = "VIEW_AS_STARTED")
             @RequestParam(required = false) String action,
@@ -93,6 +95,7 @@ public class AuditController {
                     **Requires** `supervision.read_log`.
                     """)
     @ApiResponse(responseCode = "200", description = "Entries in order, oldest first.")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<List<AuditEntryResponse>> supervisionTrail(
             @PathVariable Long viewAsSessionId) {
         return ResponseEntity.ok(

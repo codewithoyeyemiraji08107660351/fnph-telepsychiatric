@@ -35,6 +35,7 @@ public class BookingController {
     private final BookingService bookingService;
     private final AppointmentRepository appointmentRepository;
     private final PatientRepository patientRepository;
+    private final com.fnph.telepsychiatric.triage.TriageService triageService;
 
     @GetMapping("/times")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).SLOT_READ)")
@@ -105,6 +106,10 @@ public class BookingController {
 
         var patient = patientRepository.findById(CurrentUser.require().getPatientId())
                 .orElseThrow(() -> new EntityNotFoundException("No patient record on this account"));
+
+        // Consent and triage are checked here, not only in the app, so the
+        // safety stop cannot be skipped by calling the API directly.
+        triageService.requireClearedForBooking(patient.getId(), "FNPH_PATIENT");
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(toResponse(bookingService.holdSlot(patient, request.slotPublicId())));

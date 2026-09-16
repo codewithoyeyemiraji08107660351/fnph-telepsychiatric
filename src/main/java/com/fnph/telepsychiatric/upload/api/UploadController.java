@@ -77,6 +77,15 @@ public class UploadController {
                 .body(toResponse(uploadService.upload(file, category, description, referenceId)));
     }
 
+    @GetMapping
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).UPLOAD_READ)")
+    @Operation(summary = "Files attached to an appointment or referral",
+            description = "Staff had no way to find what a patient attached; files could only be "
+                    + "opened by an id nobody could list.")
+    public ResponseEntity<List<UploadResponse>> forReference(@RequestParam String referenceId) {
+        return ResponseEntity.ok(uploadService.forReference(referenceId).stream().map(this::toResponse).toList());
+    }
+
     @GetMapping("/mine")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).UPLOAD_READ_OWN)")
     @Operation(summary = "Files I uploaded",

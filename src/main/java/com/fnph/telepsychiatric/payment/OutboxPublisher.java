@@ -98,15 +98,12 @@ public class OutboxPublisher {
                 .orElseThrow(() -> new IllegalStateException(
                         "Payment " + event.getAggregateId() + " no longer exists"));
 
-
         Appointment appointment = appointmentRepository
                 .findAllByPatientIdOrderByAppointmentDateDesc(payment.getPatient().getId())
                 .stream()
                 .filter(a -> a.getStatus() == Status.SLOT_HELD)
                 .findFirst()
                 .orElse(null);
-
-
 
         if (appointment == null) {
             // Paid with nothing held. Legitimate: the hold lapsed while the
@@ -117,7 +114,16 @@ public class OutboxPublisher {
             return;
         }
 
-        bookingService.confirmPayment(appointment, payment);
+        Appointment confirmed = bookingService.confirmPayment(appointment, payment);
+
+        // The payment side of the link. Nothing set it before, so every verified
+        // payment looked unused forever: findUnusedVerifiedPayments returned the
+        // patient's first payment on every later initiate, no new event was
+        // raised, and every booking after the first sat held until it expired.
+        if (confirmed.getStatus() == Status.AWAITING_APPROVAL && payment.getAppointment() == null) {
+            payment.setAppointment(confirmed);
+            paymentRepository.save(payment);
+        }
     }
 
     /** Events stuck past the retry limit. Surfaced on the operations dashboard. */

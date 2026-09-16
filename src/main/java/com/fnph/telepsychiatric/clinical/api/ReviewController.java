@@ -139,7 +139,7 @@ public class ReviewController {
 
     private List<Map<String, Object>> toQueue(List<ProfessionalReview> reviews) {
         return reviews.stream().map(r -> {
-            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
             row.put("publicId", r.getPublicId());
             row.put("reviewType", r.getReviewType().name());
             row.put("assignedAt", r.getAssignedAt());
@@ -151,6 +151,14 @@ public class ReviewController {
             row.put("issueNumber", r.getPrescription() != null
                     ? r.getPrescription().getIssueNumber()
                     : r.getInvestigation().getIssueNumber());
+            // The reviewer needs the items they are checking. The prescription and
+            // investigation read endpoints take a public id, which the row did not
+            // carry, so a pharmacist could see that a review existed but not what
+            // was prescribed. Still no clinical note: those endpoints do not
+            // return it.
+            row.put("documentPublicId", r.getPrescription() != null
+                    ? r.getPrescription().getPublicId()
+                    : r.getInvestigation().getPublicId());
             // Deliberately no clinical note. Pharmacy and laboratory do not see it.
             return row;
         }).toList();

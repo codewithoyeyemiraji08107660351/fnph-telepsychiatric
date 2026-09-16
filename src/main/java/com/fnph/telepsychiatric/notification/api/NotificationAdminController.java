@@ -238,13 +238,16 @@ public class NotificationAdminController {
             description = "The last fifty, newest first, with who sent each and why.\n\n"
                     + "**Requires** `notification.send`.")
     @ApiResponse(responseCode = "200", description = "Broadcasts returned.")
+    // Each row reads the target role and centre, both lazy.
+    @Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> broadcasts() {
         return ResponseEntity.ok(broadcastRepository.findTop50ByOrderBySentAtDesc()
                 .stream().map(b -> {
                     Map<String, Object> row = new java.util.LinkedHashMap<>();
                     row.put("subject", b.getSubject());
-                    row.put("target", b.getTargetRole() == null
-                            ? "EVERYONE" : b.getTargetRole().getCode());
+                    // A centre-only broadcast with no role is not "everyone".
+                    row.put("target", b.getTargetRole() != null ? b.getTargetRole().getCode()
+                            : b.getCentre() != null ? "ALL_ROLES_AT_CENTRE" : "EVERYONE");
                     row.put("centre", b.getCentre() == null ? null : b.getCentre().getName());
                     row.put("sentBy", b.getSentBy());
                     row.put("sentAt", b.getSentAt());

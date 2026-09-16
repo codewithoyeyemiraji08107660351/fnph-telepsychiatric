@@ -3,6 +3,7 @@ package com.fnph.telepsychiatric.session.api;
 import com.fnph.telepsychiatric.authz.api.CurrentPrincipalResponse;
 import com.fnph.telepsychiatric.center.CenterRepository;
 import com.fnph.telepsychiatric.handler.ErrorResponse;
+import com.fnph.telepsychiatric.security.CurrentSession;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import com.fnph.telepsychiatric.security.SecurityUser;
 import com.fnph.telepsychiatric.session.SessionService;
@@ -116,10 +117,12 @@ public class SessionController {
     @ApiResponse(responseCode = "200", description = "Active sessions returned.")
     public ResponseEntity<List<SessionResponse>> mySessions() {
         SecurityUser user = CurrentUser.require();
+        String current = CurrentSession.publicId().orElse(null);
         return ResponseEntity.ok(sessionService.listActiveSessions(user.getUserId()).stream()
                 .map(s -> new SessionResponse(
                         s.getPublicId(), s.getDeviceLabel(), s.getIpAddress(), s.getUserAgent(),
-                        s.getIssuedAt(), s.getLastSeenAt(), s.getExpiresAt(), false))
+                        s.getIssuedAt(), s.getLastSeenAt(), s.getExpiresAt(),
+                        s.getPublicId().equals(current)))
                 .toList());
     }
 
@@ -128,9 +131,8 @@ public class SessionController {
     @Operation(
             summary = "Sign out one device",
             description = """
-                    Revokes a single session immediately. Its refresh token stops working
-                    at once, and its access token stops working when it expires, within
-                    fifteen minutes.
+                    Revokes a single session immediately. Its refresh token and its access
+                    token both stop working on their next use.
 
                     You can only revoke your own sessions here. An administrator holding
                     `session.revoke` uses the admin endpoint to revoke someone else's.

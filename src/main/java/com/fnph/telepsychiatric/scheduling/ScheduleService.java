@@ -58,7 +58,7 @@ public class ScheduleService {
                                        LocalTime windowStart, LocalTime windowEnd,
                                        boolean publishImmediately) {
 
-        if (serviceDate.isBefore(LocalDate.now())) {
+        if (serviceDate.isBefore(com.fnph.telepsychiatric.common.HospitalClock.today())) {
             throw new SchedulingException("That date has passed");
         }
         if (!windowEnd.isAfter(windowStart)) {
@@ -137,8 +137,9 @@ public class ScheduleService {
         LocalDate date = publication.getServiceDate();
         int minutes = publication.getSlotMinutes();
 
-        LocalDateTime periodStart = LocalDateTime.of(date, publication.getWindowStart());
-        LocalDateTime windowEnd = LocalDateTime.of(date, publication.getWindowEnd());
+        // The window is hospital time; slots are stored in UTC.
+        LocalDateTime periodStart = com.fnph.telepsychiatric.common.HospitalClock.toUtc(date, publication.getWindowStart());
+        LocalDateTime windowEnd = com.fnph.telepsychiatric.common.HospitalClock.toUtc(date, publication.getWindowEnd());
 
         while (!periodStart.plusMinutes(minutes).isAfter(windowEnd)) {
             for (Room room : rooms) {

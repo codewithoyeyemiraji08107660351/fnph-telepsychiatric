@@ -244,10 +244,12 @@ application:
       from: ${MAIL_FROM}
       from-name: FNPH Kaduna Telepsychiatry
       max-retries: 3
+      email-enabled: ${NOTIFICATION_EMAIL_ENABLED:true}
     in-app:
       enabled: true
       retention-days: 90
     reminder-lead-minutes: 1440,60,15
+
 
   # Every clinical timing value is a separate key. The source documents conflate
   # these three; conflating them in configuration reproduces the bug.

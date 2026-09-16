@@ -109,6 +109,7 @@ public class EhrImportController {
             @ApiResponse(responseCode = "400", description = "The import is not in VALIDATED state.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<EhrImportResponse> activate(
             @PathVariable String importPublicId,
             @Parameter(description = "Why this snapshot is being activated. Written to the audit "
@@ -132,6 +133,8 @@ public class EhrImportController {
                     **Requires** `ehr_import.read`.
                     """)
     @ApiResponse(responseCode = "200", description = "Imports returned, newest first.")
+    // The response names the uploader, a lazy association: map inside the transaction.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<List<EhrImportResponse>> recent() {
         return ResponseEntity.ok(importService.recentImports().stream().map(this::toResponse).toList());
     }
@@ -154,6 +157,7 @@ public class EhrImportController {
                     description = "No active snapshot. Patient enrolment is unavailable.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<EhrImportResponse> active() {
         return importService.activeImport()
                 .map(i -> ResponseEntity.ok(toResponse(i)))

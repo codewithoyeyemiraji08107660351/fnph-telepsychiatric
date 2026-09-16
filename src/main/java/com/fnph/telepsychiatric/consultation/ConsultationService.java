@@ -144,6 +144,14 @@ public class ConsultationService {
         Appointment appointment = appointmentRepository.findByPublicId(appointmentPublicId)
                 .orElseThrow(() -> new ConsultationException("No such appointment"));
 
+        // Only the assigned doctor and the patient whose appointment it is may
+        // enter. Without this, anyone holding the join permission and an
+        // appointment id could sit in on someone else's psychiatric consultation.
+        // Same answer as a missing appointment, so it confirms nothing.
+        if (!isParticipant(appointment, role)) {
+            throw new ConsultationException("No such appointment");
+        }
+
         if (appointment.getStatus() != Status.APPROVED
                 && appointment.getStatus() != Status.IN_PROGRESS) {
             throw new ConsultationException(
@@ -333,8 +341,7 @@ public class ConsultationService {
     @Transactional
     public Consultation terminate(String consultationPublicId, TerminationReason reason,
                                   String note, String safetyAction) {
-        Consultation consultation = consultationRepository.findByPublicId(consultationPublicId)
-                .orElseThrow(() -> new ConsultationException("No such consultation"));
+        Consultation consultation = requireOwnConsultation(consultationPublicId);
 
         if (consultation.getEndedAt() != null) {
             return consultation;
@@ -396,8 +403,7 @@ public class ConsultationService {
     @Transactional
     public Consultation switchModality(String consultationPublicId, Modality modality,
                                        String reason) {
-        Consultation consultation = consultationRepository.findByPublicId(consultationPublicId)
-                .orElseThrow(() -> new ConsultationException("No such consultation"));
+        Consultation consultation = requireOwnConsultation(consultationPublicId);
 
         consultation.setModality(modality);
         consultation.setHasAudioFallback(modality == Modality.AUDIO);
@@ -411,8 +417,7 @@ public class ConsultationService {
     /** Records that the clinician confirmed who is on screen. */
     @Transactional
     public Consultation confirmIdentity(String consultationPublicId) {
-        Consultation consultation = consultationRepository.findByPublicId(consultationPublicId)
-                .orElseThrow(() -> new ConsultationException("No such consultation"));
+        Consultation consultation = requireOwnConsultation(consultationPublicId);
 
         consultation.setIdentityConfirmed(true);
         consultationRepository.save(consultation);
@@ -501,6 +506,36 @@ public class ConsultationService {
                               LocalDateTime scheduledStart, LocalDateTime scheduledEnd,
                               long remainingSeconds, int firstWarningMinutes,
                               int secondWarningMinutes, boolean isOwner) {
+    }
+
+    /**
+     * The consultation, when the caller is its doctor. Ending a session,
+     * changing its modality and confirming identity belong to the clinician in
+     * the room, not to any account holding the permission.
+     */
+    private Consultation requireOwnConsultation(String consultationPublicId) {
+        Consultation consultation = consultationRepository.findByPublicId(consultationPublicId)
+                .orElseThrow(() -> new ConsultationException("No such consultation"));
+        Long caller = CurrentUser.get()
+                .map(com.fnph.telepsychiatric.security.SecurityUser::getUserId).orElse(null);
+        if (consultation.getDoctor() == null || !consultation.getDoctor().getId().equals(caller)) {
+            throw new ConsultationException("No such consultation");
+        }
+        return consultation;
+    }
+
+    private static boolean isParticipant(Appointment appointment, ParticipantRole role) {
+        var principal = CurrentUser.get().orElse(null);
+        if (principal == null) {
+            return false;
+        }
+        return switch (role) {
+            case DOCTOR -> appointment.getDoctor() != null
+                    && appointment.getDoctor().getId().equals(principal.getUserId());
+            case PATIENT -> principal.getPatientId() != null
+                    && appointment.getPatient().getId().equals(principal.getPatientId());
+            default -> false;
+        };
     }
 
     public static class ConsultationException extends RuntimeException {
