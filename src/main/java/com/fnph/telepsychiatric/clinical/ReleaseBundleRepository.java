@@ -1,7 +1,10 @@
 package com.fnph.telepsychiatric.clinical;
 
+import com.fnph.telepsychiatric.consultation.CentreConsultationNote;
 import com.fnph.telepsychiatric.tenancy.UnscopedQuery;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 
@@ -34,7 +37,13 @@ public interface ReleaseBundleRepository extends JpaRepository<ReleaseBundle, Lo
     Optional<ReleaseBundle> findByAppointmentId(Long appointmentId);
 
     @UnscopedQuery(value = UnscopedQuery.Reason.KEYED_BY_SCOPED_PARENT,
-            detail = "centreAppointmentId comes from a CentreAppointment resolved by the "
-                    + "consulting doctor in CentreClinicalService")
+            detail = "keyed by centre appointment id, which the caller resolved "
+                    + "through a centre-scoped lookup before reaching this")
+    @Query("""
+           select n from CentreConsultationNote n
+             join n.centreConsultation c
+            where c.centreAppointment.id = :centreAppointmentId
+              and n.supersededAt is null
+           """)
     Optional<ReleaseBundle> findByCentreAppointmentId(Long centreAppointmentId);
 }

@@ -1,0 +1,4 @@
+[mysqldump]
+user=fnph_backup
+password=REPLACE_ON_SERVER
+host=localhost

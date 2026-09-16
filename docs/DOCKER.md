@@ -173,7 +173,7 @@ Copy-Item .env.example .env
 ```
 
 ```bash
-cp .env .env          # macOS, Linux
+cp .env.dev .env.dev          # macOS, Linux
 ```
 
 Now fill in the values that have none. Three matter for local development.
@@ -624,7 +624,7 @@ Get-Content .env | Where-Object { $_ -match '^\s*[^#].*=' } | ForEach-Object {
 ```
 
 ```bash
-set -a && source .env && set +a
+set -a && source .env.dev && set +a
 ```
 
 ### Flyway reports a checksum mismatch

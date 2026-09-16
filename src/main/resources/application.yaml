@@ -100,6 +100,7 @@ server:
 
 application:
   base-url: ${APP_BASE_URL:http://localhost:8080}
+  portal-url: ${APP_PORTAL_URL:http://localhost:5173}
   display-timezone: Africa/Lagos
 
   cors:
@@ -121,7 +122,7 @@ application:
       #   openssl rand -base64 32
       # Rotating this makes every enrolled second factor undecryptable, so every
       # user has to enrol again. Treat it as permanent.
-      key: ${ENCRYPTION_KEY}
+      key: tcrOKEhI9rSWZC8BmBsQEHRsDpJGhuJRLze+ABSQNcY
 
     auth:
       # Per-username lockout.
@@ -307,7 +308,13 @@ management:
         include: health,info,prometheus
   endpoint:
     health:
-      show-details: never
+      show-details: when-authorized
+      show-components: when-authorized
+    group:
+      liveness:
+        include: ping
+      readiness:
+        include: db
   metrics:
     tags:
       application: fnph-telepsychiatry
@@ -320,3 +327,7 @@ logging:
   level:
     root: INFO
     com.fnph.telepsychiatric: INFO
+
+volumes:
+  - mysql_data:/var/lib/mysql
+  - ./deploy/mysql-backup.cnf:/etc/mysql/backup.cnf:ro

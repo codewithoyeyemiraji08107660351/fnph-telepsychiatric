@@ -56,7 +56,7 @@ public class IssuedDocumentService {
     private final ConfigurationService configuration;
     private final AuditService auditService;
 
-    @Value("${application.base-url}")
+    @Value("${application.portal-url:${application.base-url}}")
     private String baseUrl;
 
     // -----------------------------------------------------------------

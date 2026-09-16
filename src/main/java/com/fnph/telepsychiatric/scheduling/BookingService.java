@@ -14,6 +14,7 @@ import com.fnph.telepsychiatric.payment.Payment;
 import com.fnph.telepsychiatric.payment.PatientCreditService;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
+import com.fnph.telepsychiatric.triage.TriageService;
 import com.fnph.telepsychiatric.user.Users;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -72,6 +73,7 @@ public class BookingService {
     private final ConfigurationService configuration;
     private final InAppNotificationService notifications;
     private final AuditService auditService;
+    private final TriageService triageService;
 
     // -----------------------------------------------------------------
     // Step 1: choose a time
@@ -163,6 +165,7 @@ public class BookingService {
         } catch (OptimisticLockingFailureException e) {
             throw new BookingException("Someone just took that time. Please choose another.");
         }
+        triageService.requireClearedForBooking(patient.getId(), "FNPH_PATIENT");
 
         SlotHold hold = new SlotHold();
         hold.setSlot(slot);

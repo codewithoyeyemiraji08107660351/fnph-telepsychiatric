@@ -106,6 +106,7 @@ public class ReleaseController {
         return ResponseEntity.ok(toResponse(releaseService.block(bundlePublicId, reason)));
     }
 
+
     private ReleaseBundleResponse toResponse(ReleaseBundle bundle) {
         var components = releaseService.componentsOf(bundle.getId()).stream()
                 .map(c -> new ReleaseBundleResponse.ComponentState(

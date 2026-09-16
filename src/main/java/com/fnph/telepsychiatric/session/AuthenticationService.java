@@ -2,6 +2,7 @@ package com.fnph.telepsychiatric.session;
 
 import com.fnph.telepsychiatric.authz.RoleScope;
 import com.fnph.telepsychiatric.email.AccountEmailService;
+import com.fnph.telepsychiatric.security.CurrentSession;
 import com.fnph.telepsychiatric.security.JwtService;
 import com.fnph.telepsychiatric.security.SecurityUser;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
@@ -308,7 +309,11 @@ public class AuthenticationService {
         userRepository.save(user);
 
         // Keeps the current device signed in; ends every other one.
-        sessionService.revokeAll(user.getId(), null, "Password changed");
+        sessionService.revokeAll(
+                user.getId(),
+                CurrentSession.id().orElse(null),
+                "Password changed"
+        );
 
         emailService.sendPasswordChanged(user.getEmail(), user.getFullName(), now, context.ipAddress());
     }

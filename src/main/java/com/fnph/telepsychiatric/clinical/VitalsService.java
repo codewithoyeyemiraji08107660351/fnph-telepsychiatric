@@ -11,7 +11,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Vitals capture.
@@ -45,7 +48,7 @@ public class VitalsService {
         Appointment appointment = appointmentRepository.findByPublicId(appointmentPublicId)
                 .orElseThrow(() -> new VitalsException("No such appointment"));
 
-        validate(entry);
+        validate(appointment, entry);
 
         Vitals vitals = new Vitals();
         vitals.setAppointment(appointment);
@@ -74,6 +77,19 @@ public class VitalsService {
                 .build());
 
         return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public Set<Long> appointmentsWithVitals(Collection<Long> appointmentIds) {
+
+        if (appointmentIds == null || appointmentIds.isEmpty()) {
+            return Set.of();
+        }
+
+        return vitalsRepository
+                .findAppointmentIdsWithVitals(appointmentIds)
+                .stream()
+                .collect(Collectors.toSet());
     }
 
     /**
@@ -114,7 +130,34 @@ public class VitalsService {
         return Math.round((weightKg / (metres * metres)) * 10.0) / 10.0;
     }
 
-    private void validate(VitalsEntry e) {
+    /**
+     * Range checks, plus the ownership check.
+     *
+     * The appointment is passed in rather than read from a field. It used to be
+     * an injected field, which is what stopped the application starting:
+     * Appointment is a JPA entity, so Spring has no bean to give, and Lombok's
+     * @RequiredArgsConstructor turned the field into a constructor parameter.
+     *
+     * Worth noting that if it had somehow started, the check would have been
+     * reading one shared instance for the life of the application rather than
+     * the appointment being recorded, so a patient could have written vitals
+     * against anyone's appointment.
+     */
+    private void validate(Appointment appointment, VitalsEntry e) {
+        // Ownership first. A patient may only record against their own
+        // appointment, and there is no reason to range-check a reading that is
+        // about to be refused.
+        //
+        // The message is deliberately the same as a missing appointment. Saying
+        // "that is not yours" confirms the appointment exists, which lets
+        // someone walk the identifiers to discover who has appointments at a
+        // neuropsychiatric hospital.
+        Long callerPatientId = CurrentUser.patientId().orElse(null);
+        if (callerPatientId != null
+                && !callerPatientId.equals(appointment.getPatient().getId())) {
+            throw new VitalsException("No such appointment");
+        }
+
         // Wide on purpose. These catch a slipped decimal point, not an unusual
         // patient, and a rule that rejects a real reading is worse than none.
         range("Systolic blood pressure", e.systolic(), 50, 300);

@@ -1,6 +1,21 @@
 package com.fnph.telepsychiatric.handler;
 
+import com.fnph.telepsychiatric.centre.CentreBookingService;
+import com.fnph.telepsychiatric.centre.CentreWalletService;
+import com.fnph.telepsychiatric.clinical.ClinicalService;
+import com.fnph.telepsychiatric.clinical.VitalsService;
+import com.fnph.telepsychiatric.consultation.ConsultationService;
+import com.fnph.telepsychiatric.consultation.video.DailyVideoProvider;
+import com.fnph.telepsychiatric.document.IssuedDocumentService;
+import com.fnph.telepsychiatric.payment.PaymentService;
+import com.fnph.telepsychiatric.scheduling.BookingService;
+import com.fnph.telepsychiatric.scheduling.ScheduleService;
+import com.fnph.telepsychiatric.session.AuthenticationService;
+import com.fnph.telepsychiatric.storage.StorageService;
 import com.fnph.telepsychiatric.tenancy.CrossTenantAccessException;
+import com.fnph.telepsychiatric.triage.TriageService;
+import com.fnph.telepsychiatric.upload.UploadService;
+import io.micrometer.core.ipc.http.HttpSender;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
@@ -22,6 +37,9 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+
+import static io.micrometer.core.ipc.http.HttpSender.Request.build;
+import static org.springframework.http.HttpStatus.CONFLICT;
 
 @RestControllerAdvice
 @Slf4j
@@ -190,6 +208,41 @@ public class GlobalExceptionHandler {
 
         return new ResponseEntity<>(errorResponse, HttpStatus.INTERNAL_SERVER_ERROR);
     }
+
+    @ExceptionHandler({
+            BookingService.BookingException.class,
+            ScheduleService.SchedulingException.class,
+            ClinicalService.ClinicalException.class,
+            VitalsService.VitalsException.class,
+            ConsultationService.ConsultationException.class,
+            IssuedDocumentService.DocumentException.class,
+            PaymentService.PaymentException.class,
+            TriageService.TriageException.class,
+            UploadService.UploadException.class,
+            CentreBookingService.CentreBookingException.class,
+            CentreWalletService.InsufficientWalletException.class
+    })
+    public void handleDomainRefusal(RuntimeException ex) {
+               log.info("Request refused: {}", ex.getMessage());
+//               return build(HttpStatus.CONFLICT, HttpSender.Request);
+    }
+
+    @ExceptionHandler(AuthenticationService.AuthenticationFailedException.class)
+    public void handleAuthenticationFailed(
+            AuthenticationService.AuthenticationFailedException ex) {
+        //return build(HttpStatus.UNAUTHORIZED, "Unauthorized", ex.getMessage());
+    }
+    @ExceptionHandler({
+            DailyVideoProvider.VideoProviderException.class,
+            StorageService.StorageException.class
+    })
+//    public ResponseEntity<ErrorResponse> handleDependencyFailure(RuntimeException ex) {
+//        log.error("Dependency failure", ex);
+//        return ErrorResponse.builder()
+//                        .message("\"Service Unavailable")
+//                                .
+//                build();
+//    }
 
     private String getPath() {
         // In a real implementation, you would get the current request path

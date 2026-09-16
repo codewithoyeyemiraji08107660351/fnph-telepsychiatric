@@ -126,7 +126,7 @@ public class TriageController {
     }
 
     @GetMapping("/triage/mine")
-    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).TRIAGE_READ)")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).TRIAGE_SUBMIT)")
     @Operation(
             summary = "My triage history",
             description = """
@@ -153,7 +153,8 @@ public class TriageController {
     }
 
     @GetMapping("/consent/current")
-    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CONSENT_READ)")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CONSENT_READ)" +
+            "T(com.fnph.telepsychiatric.authz.Permissions).CONSENT_ACCEPT)" )
     @Operation(
             summary = "The consent text in force",
             description = """

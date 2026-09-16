@@ -30,9 +30,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
 
+    static final String PASSWORD_CHANGE_PATH =
+            "/api/v1/auth/password/change";
+
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
+
         String path = request.getServletPath();
+
+        if (PASSWORD_CHANGE_PATH.equals(path)) {
+            return false;
+        }
         return path.startsWith("/api/v1/auth/")
                 || path.startsWith("/api/v1/enrolment/")
                 || path.startsWith("/api/v1/webhooks/")

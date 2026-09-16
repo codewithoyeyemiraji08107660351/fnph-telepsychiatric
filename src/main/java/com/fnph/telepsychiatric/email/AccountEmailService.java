@@ -55,7 +55,7 @@ public class AccountEmailService {
     @Value("${application.notification.email.from-name}")
     private String fromName;
 
-    @Value("${application.base-url}")
+    @Value("${application.portal-url:${application.base-url}}")
     private String baseUrl;
 
     @Value("${application.clinical.clinical-emergency-number}")

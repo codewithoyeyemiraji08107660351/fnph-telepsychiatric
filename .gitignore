@@ -34,7 +34,7 @@ build/
 .vscode/
 
 # Secrets
-.env
+.env.dev
 .env.local
 *.pem
 *.p12

@@ -75,7 +75,7 @@ class TenantIsolationTest {
         registry.add("application.security.encryption.key",
                 () -> "dGVzdC1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcyEhISE=");
         // The placeholders in application.yaml that carry no default. Spring
-        // never imports .env, so under surefire none of these resolve. Supplied
+        // never imports .env.dev, so under surefire none of these resolve. Supplied
         // by their raw names so the ${...} references resolve without needing to
         // know each internal property path.
         registry.add("DB_USERNAME", () -> System.getProperty("test.db.username", "fnph_app"));

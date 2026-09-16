@@ -318,6 +318,16 @@ public class PaymentService {
         }
     }
 
+    private void publishVerified(Payment payment, String note) {
+        OutboxEvent event = new OutboxEvent();
+        event.setAggregateType("Payment");
+        event.setAggregateId(payment.getId());
+        event.setEventType("PAYMENT_VERIFIED");
+        event.setPayload("{\"reference\":\"%s\",\"patientId\":%d,\"note\":\"%s\"}"
+                .formatted(payment.getReference(), payment.getPatient().getId(), note));
+        outboxRepository.save(event);
+    }
+
     private String extractOrderId(String payload) {
         try {
             com.fasterxml.jackson.databind.JsonNode node =
@@ -390,5 +400,13 @@ public class PaymentService {
         public PaymentException(String message) {
             super(message);
         }
+    }
+
+    @Transactional
+    public Payment verifyForPatient(String reference, Long patientId) {
+        Payment payment = paymentRepository.findByReference(reference)
+                .filter(p -> p.getPatient().getId().equals(patientId))
+                .orElseThrow(() -> new PaymentException("No payment with that reference"));
+        return verify(payment.getReference());
     }
 }

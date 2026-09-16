@@ -107,7 +107,8 @@ public class PaymentController {
             @Parameter(description = "The internal payment reference.", example = "FNPH-A7K2M9PQR4",
                     required = true)
             @PathVariable String reference) {
-        return ResponseEntity.ok(toResponse(paymentService.verify(reference)));
+        return ResponseEntity.ok(toResponse(paymentService.verifyForPatient(
+                reference, CurrentUser.require().getPatientId())));
     }
 
     @GetMapping("/mine")

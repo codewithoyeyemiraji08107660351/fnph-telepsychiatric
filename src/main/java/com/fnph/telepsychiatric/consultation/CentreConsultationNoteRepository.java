@@ -24,7 +24,8 @@ public interface CentreConsultationNoteRepository
     @UnscopedQuery(value = UnscopedQuery.Reason.KEYED_BY_SCOPED_PARENT,
             detail = "centreAppointmentId comes from a CentreAppointment the consulting doctor "
                     + "already resolved through a hospital-scoped path")
-    Optional<CentreConsultation> findByCentreAppointmentId(Long centreAppointmentId);
+    Optional<CentreConsultationNote> findByCentreConsultationIdAndSupersededAtIsNull(
+            Long centreConsultationId);
 
     @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
             detail = "consulting doctor and Hub Coordinator join and supervise sessions across "

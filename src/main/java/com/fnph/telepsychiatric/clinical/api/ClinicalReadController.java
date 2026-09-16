@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.clinical.api;
 
+import com.fnph.telepsychiatric.appointment.Appointment;
 import com.fnph.telepsychiatric.appointment.AppointmentRepository;
 import com.fnph.telepsychiatric.appointment.Status;
 import com.fnph.telepsychiatric.clinical.*;
@@ -15,8 +16,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Reading clinical output, and the two work queues that had no endpoint.
@@ -257,6 +261,90 @@ public class ClinicalReadController {
         row.put("maxDownloads", d.getMaxDownloads());
         row.put("revokedReason", d.getRevokedReason());
         return ResponseEntity.ok(row);
+    }
+
+    @GetMapping("/queues/doctor")
+    @PreAuthorize("""
+        hasAuthority(
+            T(com.fnph.telepsychiatric.authz.Permissions)
+                .CONSULTATION_JOIN_AS_DOCTOR
+        )
+        """)
+    @Operation(
+            summary = "Your consultations",
+            description = """
+                Approved and in-progress appointments assigned to the
+                authenticated doctor, soonest first.
+
+                No clinical note, prescription or investigation content
+                is returned by this endpoint.
+                """)
+    @ApiResponse(
+            responseCode = "200",
+            description = "Your consultations, soonest first.")
+    public ResponseEntity<List<Map<String, Object>>> doctorQueue() {
+
+        Long userId = CurrentUser.require().getUserId();
+
+        List<Appointment> appointments =
+                appointmentRepository.findDoctorQueue(
+                        userId,
+                        List.of(Status.IN_PROGRESS, Status.APPROVED));
+
+        List<Map<String, Object>> rows = appointments.stream()
+                .map(a -> {
+
+                    Map<String, Object> row = new LinkedHashMap<>();
+
+                    row.put("appointmentPublicId", a.getPublicId());
+                    row.put("reference", a.getReference());
+                    row.put("status", a.getStatus().name());
+                    row.put("appointmentDate", a.getAppointmentDate());
+                    row.put("scheduledEndAt", a.getScheduledEndAt());
+                    row.put("room", a.getRoom());
+
+                    row.put(
+                            "patientName",
+                            a.getPatient().getFirstName()
+                                    + " "
+                                    + a.getPatient().getLastName()
+                    );
+
+                    row.put(
+                            "ehrNumber",
+                            a.getPatient().getEhrNumber()
+                    );
+
+                    row.put(
+                            "nursingState",
+                            workQueueService
+                                    .stateOf(
+                                            a,
+                                            WorkQueueService.Queue.NURSING)
+                                    .name()
+                    );
+
+                    row.put(
+                            "himState",
+                            workQueueService
+                                    .stateOf(
+                                            a,
+                                            WorkQueueService.Queue.HIM)
+                                    .name()
+                    );
+
+                    Set<Long> appointmentIds = appointments.stream()
+                            .map(Appointment::getId)
+                            .collect(Collectors.toSet());
+
+                    Set<Long> appointmentsWithVitals =
+                            vitalsService.appointmentsWithVitals(appointmentIds);
+
+                    return row;
+                })
+                .toList();
+
+        return ResponseEntity.ok(rows);
     }
 
     private List<Map<String, Object>> queueFor(String role) {

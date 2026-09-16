@@ -85,7 +85,8 @@ public class CentreConsultationService {
 
         CentreConsultation consultation = consultationRepository
                 .findByCentreAppointmentId(appointment.getId())
-                .orElseGet(CentreConsultation::new);
+                .orElseThrow(() -> new IllegalStateException(
+                        "That appointment has no consultation yet"));
 
         consultation.setCentre(appointment.getCentre());
         consultation.setCentreAppointment(appointment);

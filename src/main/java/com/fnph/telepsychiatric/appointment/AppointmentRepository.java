@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,7 +22,18 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
     /** The Hub Coordinator's queue: paid, waiting on a decision. */
     Page<Appointment> findAllByStatusOrderByAppointmentDateAsc(Status status,
                                                                Pageable pageable);
-
+    @Query("""
+       select a
+       from Appointment a
+       join fetch a.patient p
+       left join fetch a.doctor d
+       where d.id = :doctorId
+         and a.status in :statuses
+       order by a.appointmentDate asc
+       """)
+    List<Appointment> findDoctorQueue(
+            @Param("doctorId") Long doctorId,
+            @Param("statuses") Collection<Status> statuses);
     long countByStatus(Status status);
 
     /** Held appointments whose payment never completed. */

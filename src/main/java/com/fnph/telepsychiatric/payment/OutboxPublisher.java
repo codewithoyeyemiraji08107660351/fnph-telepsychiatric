@@ -98,12 +98,15 @@ public class OutboxPublisher {
                 .orElseThrow(() -> new IllegalStateException(
                         "Payment " + event.getAggregateId() + " no longer exists"));
 
+
         Appointment appointment = appointmentRepository
                 .findAllByPatientIdOrderByAppointmentDateDesc(payment.getPatient().getId())
                 .stream()
                 .filter(a -> a.getStatus() == Status.SLOT_HELD)
                 .findFirst()
                 .orElse(null);
+
+
 
         if (appointment == null) {
             // Paid with nothing held. Legitimate: the hold lapsed while the

@@ -266,6 +266,32 @@ public class TriageService {
         return consentDocuments.save(document);
     }
 
+    @Transactional(readOnly = true)
+    public void requireClearedForBooking(Long patientId, String audience) {
+        String consentVersion = activeConsent(audience).getVersion();
+        boolean consented = consentAcceptances.findFirstByPatientIdOrderByAcceptedAtDesc(patientId)
+                .map(a -> consentVersion.equals(a.getConsentVersion()))
+                .orElse(false);
+        if (!consented) {
+            throw new TriageException("Accept the current consent before choosing a time.");
+        }
+
+        String questionVersion = activeQuestions(audience).getVersion();
+        TriageResponse latest = responses.findAllByPatientIdOrderBySubmittedAtDesc(patientId)
+                .stream().findFirst()
+                .orElseThrow(() -> new TriageException(
+                        "Answer the safety questions before choosing a time."));
+        if (!questionVersion.equals(latest.getTriageVersion())) {
+            throw new TriageException(
+                    "The safety questions have changed. Answer them again before choosing a time.");
+        }
+        if (!"PROCEED".equals(latest.getOutcome())) {
+            throw new TriageException(
+                    "Your answers mean a video appointment is not right for you now. "
+                            + "Please use the emergency contact shown to you.");
+        }
+    }
+
     @Transactional
     public TriageQuestionSet publishQuestions(String setPublicId) {
         TriageQuestionSet set = questionSets.findByPublicId(setPublicId)

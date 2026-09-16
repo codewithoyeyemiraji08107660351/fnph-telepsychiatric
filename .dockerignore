@@ -1,0 +1,11 @@
+target/
+.git/
+.gitignore
+.idea/
+*.iml
+node_modules/
+backups/
+docker/
+*.md
+.env
+.env.*

@@ -1,23 +1,73 @@
 spring:
+  flyway:
+    # A clean against production is unrecoverable and it is one property away.
+    clean-disabled: true
+    # Refuse to start on a checksum mismatch rather than repairing silently.
+    # An edited migration means the schema and the file no longer agree, and
+    # on a database holding patient records that is a question to answer, not
+    # a warning to pass.
+    validate-on-migrate: true
+    # No baseline-on-migrate. A production database that Flyway does not
+    # recognise must stop the deploy, not get a baseline stamped on it.
+
+  datasource:
+    hikari:
+      # 20 against MySQL's max-connections of 60, which leaves room for the
+      # backup account and a session someone left open in a client.
+      maximum-pool-size: 20
+      minimum-idle: 5
+      # Fail fast rather than queueing behind an exhausted pool. A request
+      # that waits 30 seconds for a connection has already failed from the
+      # clinician's point of view.
+      connection-timeout: 10000
+      # Longer than any request should take. A connection held beyond this is
+      # a leak, and the log entry is how it gets found.
+      leak-detection-threshold: 60000
+      max-lifetime: 1200000
+
   jpa:
-    show-sql: false
-  devtools:
-    restart:
-      enabled: false
+    hibernate:
+      # Flyway owns the schema. Hibernate must never alter it, and "validate"
+      # would fail the deploy on any entity that has drifted from a migration,
+      # which is the behaviour wanted.
+      ddl-auto: validate
+    open-in-view: false
+    # open-in-view keeps a database connection open for the whole request,
+    # including while the response is being written. On a 20-connection pool
+    # behind a slow client that is how the pool runs dry.
 
 server:
   error:
     include-stacktrace: never
     include-message: never
     include-binding-errors: never
+  # Behind Traefik. Without this, generated URLs use the container's internal
+  # address and every link in an invitation email points somewhere unreachable.
+  forward-headers-strategy: framework
+  tomcat:
+    # Only Traefik talks to this, so a request claiming a different client
+    # address is either Traefik or something that should not be trusted.
+    remoteip:
+      remote-ip-header: X-Forwarded-For
+      protocol-header: X-Forwarded-Proto
 
-springdoc:
-  api-docs:
-    enabled: false
-  swagger-ui:
-    enabled: false
+application:
+  storage:
+    # ClamAV is not provisioned. The gate is built and this is the switch.
+    #
+    # Left false deliberately: with nothing writing CLEAN, turning it on
+    # refuses every download in the system, permanently, because uploads sit
+    # at UPLOADED forever. Quarantined and rejected files are refused whether
+    # this is on or off.
+    require-clean-scan: ${UPLOAD_REQUIRE_CLEAN_SCAN:false}
 
 logging:
   level:
     root: WARN
     com.fnph.telepsychiatric: INFO
+    # Off explicitly. At DEBUG this logs bound parameters, which on this
+    # application means patient names, EHR numbers and clinical note text in
+    # the container log.
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN
+    org.springframework.security: WARN
