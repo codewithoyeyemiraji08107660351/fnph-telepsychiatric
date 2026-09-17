@@ -25,6 +25,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Uploading, validating and activating an EHR snapshot.
@@ -55,15 +56,53 @@ import java.util.List;
 @Slf4j
 public class EhrImportService {
 
-    private static final DateTimeFormatter[] DATE_FORMATS = {
-            DateTimeFormatter.ISO_LOCAL_DATE,
-            DateTimeFormatter.ofPattern("dd/MM/yyyy"),
-            DateTimeFormatter.ofPattern("dd-MM-yyyy")
-    };
+    /**
+     * Day-first date formats, in the order they are tried. Month-first is only
+     * tried when day-first is impossible (a "day" above 12 in the month slot).
+     */
+    private static final List<DateTimeFormatter> DATE_FORMATS = java.util.stream.Stream.of(
+                    "yyyy-M-d", "yyyy/M/d", "yyyyMMdd",
+                    "d/M/yyyy", "d-M-yyyy", "d.M.yyyy", "d M yyyy",
+                    "d/M/yy", "d-M-yy", "d.M.yy", "d M yy",
+                    "d MMM yyyy", "d-MMM-yyyy", "d/MMM/yyyy", "d MMMM yyyy", "d-MMMM-yyyy",
+                    "MMM d, yyyy", "MMMM d, yyyy", "MMM d yyyy", "MMMM d yyyy")
+            .map(pattern -> new java.time.format.DateTimeFormatterBuilder()
+                    .parseCaseInsensitive()
+                    .appendPattern(pattern.replace("yy", "uu").replace("uuuu", "uuuu"))
+                    .toFormatter(java.util.Locale.ENGLISH))
+            .toList();
 
-    private static final String[] REQUIRED_HEADERS = {
-            "ehr_number", "full_name", "date_of_birth", "phone_number"
-    };
+    private static final List<DateTimeFormatter> MONTH_FIRST_FORMATS = java.util.stream.Stream.of(
+                    "M/d/yyyy", "M-d-yyyy")
+            .map(pattern -> DateTimeFormatter.ofPattern(pattern.replace("yyyy", "uuuu"), java.util.Locale.ENGLISH))
+            .toList();
+
+    /**
+     * Column names accepted for each field, compared after lower-casing and
+     * turning every run of non-letters into an underscore ("EHR No." becomes
+     * ehr_no, "D.O.B" becomes d_o_b).
+     */
+    private static final Map<String, List<String>> COLUMN_ALIASES = Map.ofEntries(
+            Map.entry("ehr_number", List.of("ehr_number", "ehr_no", "ehr", "ehrnumber", "ehr_id",
+                    "hospital_number", "hospital_no", "patient_id", "patient_number", "patient_no",
+                    "mrn", "record_number", "folder_number", "folder_no", "file_number", "file_no",
+                    "card_number", "card_no")),
+            Map.entry("full_name", List.of("full_name", "fullname", "name", "patient_name", "patient_full_name",
+                    "names")),
+            Map.entry("first_name", List.of("first_name", "firstname", "given_name", "forename", "other_names",
+                    "othernames")),
+            Map.entry("middle_name", List.of("middle_name", "middlename", "middle")),
+            Map.entry("last_name", List.of("last_name", "lastname", "surname", "family_name")),
+            Map.entry("date_of_birth", List.of("date_of_birth", "dob", "d_o_b", "birth_date", "birthdate",
+                    "date_birth", "birthday")),
+            Map.entry("phone_number", List.of("phone_number", "phone", "phone_no", "mobile", "mobile_number",
+                    "mobile_no", "telephone", "tel", "gsm", "gsm_number", "contact_number", "contact_phone")),
+            Map.entry("email", List.of("email", "email_address", "e_mail", "mail", "contact_email")),
+            Map.entry("clinic", List.of("clinic", "department", "unit", "ward")),
+            Map.entry("patient_status", List.of("patient_status", "status")));
+
+    /** Only the first issues are kept in the report, so a bad file cannot fill the column. */
+    private static final int MAX_REPORTED_ISSUES = 200;
 
     private final EhrImportRepository importRepository;
     private final EhrRecordRepository recordRepository;
@@ -123,16 +162,17 @@ public class EhrImportService {
 
         ehrImport.setRowCount(result.totalRows);
         ehrImport.setValidRowCount(result.records.size());
-        ehrImport.setRejectedRowCount(result.errors.size());
+        ehrImport.setRejectedRowCount(result.totalRows - result.records.size());
 
-        if (!result.errors.isEmpty()) {
-            // Nothing is loaded. The report names every failing line so the
-            // uploader can fix the export rather than guess.
+        // Rows that fail are skipped and listed; the rest load. The file is only
+        // refused when it cannot be read, lacks a required column, or has no
+        // usable row at all. One bad line used to reject the whole export.
+        if (result.fatal() || result.records.isEmpty()) {
             ehrImport.setStatus(ImportStatus.REJECTED);
-            ehrImport.setValidationReport(String.join("\n", result.errors));
+            ehrImport.setValidationReport(report(result, "Nothing was loaded."));
             importRepository.save(ehrImport);
-            log.warn("EHR import {} rejected: {} of {} rows failed validation",
-                    ehrImport.getPublicId(), result.errors.size(), result.totalRows);
+            log.warn("EHR import {} rejected: no usable rows ({} rows read, {} issues)",
+                    ehrImport.getPublicId(), result.totalRows, result.errors.size());
             return ehrImport;
         }
 
@@ -142,11 +182,14 @@ public class EhrImportService {
         });
 
         ehrImport.setStatus(ImportStatus.VALIDATED);
-        ehrImport.setValidationReport("All %d rows valid.".formatted(result.records.size()));
+        ehrImport.setValidationReport(report(result, result.errors.isEmpty()
+                ? "All %d rows loaded.".formatted(result.records.size())
+                : "%d of %d rows loaded; %d skipped.".formatted(
+                result.records.size(), result.totalRows, result.totalRows - result.records.size())));
         importRepository.save(ehrImport);
 
-        log.info("EHR import {} validated: {} rows, extract dated {}",
-                ehrImport.getPublicId(), result.records.size(), sourceAsAt);
+        log.info("EHR import {} validated: {} of {} rows loaded, extract dated {}",
+                ehrImport.getPublicId(), result.records.size(), result.totalRows, sourceAsAt);
         return ehrImport;
     }
 
@@ -231,65 +274,85 @@ public class EhrImportService {
         java.util.Set<String> seenNumbers = new java.util.HashSet<>();
         int total = 0;
 
+        String text = new String(bytes, StandardCharsets.UTF_8);
+        // Excel's "CSV UTF-8" starts with a byte-order mark, which made the first
+        // column name unrecognisable.
+        if (text.startsWith("\uFEFF")) {
+            text = text.substring(1);
+        }
+
         CSVFormat format = CSVFormat.DEFAULT.builder()
+                .setDelimiter(detectDelimiter(text))
                 .setHeader().setSkipHeaderRecord(true)
                 .setIgnoreHeaderCase(true).setTrim(true)
+                .setIgnoreEmptyLines(true)
+                .setAllowMissingColumnNames(true)
                 .build();
 
-        try (CSVParser parser = CSVParser.parse(
-                new BufferedReader(new InputStreamReader(
-                        new java.io.ByteArrayInputStream(bytes), StandardCharsets.UTF_8)),
-                format)) {
+        try (CSVParser parser = CSVParser.parse(new java.io.StringReader(text), format)) {
 
-            for (String header : REQUIRED_HEADERS) {
-                if (!parser.getHeaderMap().containsKey(header)) {
-                    errors.add("Missing required column: " + header
-                            + ". Expected columns: " + String.join(", ", REQUIRED_HEADERS)
-                            + " (clinic and patient_status are optional).");
-                }
+            Map<String, String> columns = resolveColumns(parser.getHeaderNames());
+            List<String> missing = new ArrayList<>();
+            if (!columns.containsKey("ehr_number")) {
+                missing.add("an EHR number (" + String.join(", ", COLUMN_ALIASES.get("ehr_number").subList(0, 4)) + ", ...)");
             }
-            if (!errors.isEmpty()) {
-                return new ParseResult(0, records, errors);
+            if (!columns.containsKey("full_name") && !columns.containsKey("first_name") && !columns.containsKey("last_name")) {
+                missing.add("a name (full_name, or first_name and last_name / surname)");
+            }
+            if (!columns.containsKey("date_of_birth")) {
+                missing.add("a date of birth (date_of_birth, dob, birth_date)");
+            }
+            if (!missing.isEmpty()) {
+                errors.add("Missing column for " + String.join("; ", missing)
+                        + ". Columns found: " + String.join(", ", parser.getHeaderNames()) + ".");
+                return new ParseResult(0, records, errors, true);
             }
 
             for (CSVRecord row : parser) {
+                if (isBlankRow(row)) {
+                    continue;
+                }
                 total++;
                 long line = row.getRecordNumber() + 1;
 
-                String ehrNumber = value(row, "ehr_number");
-                String fullName = value(row, "full_name");
-                String dob = value(row, "date_of_birth");
-                String phone = value(row, "phone_number");
+                String ehrNumber = field(row, columns, "ehr_number");
+                String fullName = nameOf(row, columns);
+                String dob = field(row, columns, "date_of_birth");
 
                 if (ehrNumber.isBlank()) {
-                    errors.add("Line " + line + ": ehr_number is empty");
+                    errors.add("Line " + line + ": skipped, no EHR number");
                     continue;
                 }
                 if (!seenNumbers.add(ehrNumber)) {
-                    // Two rows for one patient means the export is wrong, and
-                    // matching would be non-deterministic.
-                    errors.add("Line " + line + ": ehr_number " + ehrNumber
-                            + " appears more than once in this file");
+                    // The first row for a number is kept; matching needs exactly one.
+                    errors.add("Line " + line + ": skipped, EHR number " + ehrNumber
+                            + " already appeared earlier in the file");
                     continue;
                 }
                 if (fullName.isBlank()) {
-                    errors.add("Line " + line + ": full_name is empty for " + ehrNumber);
+                    errors.add("Line " + line + ": skipped, no name for " + ehrNumber);
                     continue;
                 }
-
                 LocalDate dateOfBirth = parseDate(dob);
                 if (dateOfBirth == null) {
-                    errors.add("Line " + line + ": date_of_birth '" + dob
-                            + "' is not a date. Use YYYY-MM-DD, DD/MM/YYYY or DD-MM-YYYY.");
+                    errors.add("Line " + line + ": skipped, date of birth '" + dob + "' for " + ehrNumber
+                            + " is not a date the importer understands");
                     continue;
                 }
-                if (dateOfBirth.isAfter(LocalDate.now())) {
-                    errors.add("Line " + line + ": date_of_birth is in the future");
+                if (dateOfBirth.isAfter(LocalDate.now()) || dateOfBirth.getYear() < 1900) {
+                    errors.add("Line " + line + ": skipped, date of birth " + dateOfBirth + " for " + ehrNumber
+                            + " is not plausible");
                     continue;
                 }
 
-                String normalisedPhone = normalisePhone(phone);
-                String normalisedEmail = normaliseEmail(optional(row, "email"));
+                String normalisedPhone = normalisePhone(field(row, columns, "phone_number"));
+                String normalisedEmail = normaliseEmail(field(row, columns, "email"));
+                if (normalisedPhone == null && normalisedEmail == null) {
+                    // Loaded anyway: the patient can still be enrolled at a desk or
+                    // through a manual check. Reported so the gap is visible.
+                    errors.add("Line " + line + ": loaded without a phone or email for " + ehrNumber
+                            + "; online enrolment will not be able to send a code");
+                }
 
                 EhrVerificationRecord record = new EhrVerificationRecord();
                 record.setEhrNumber(ehrNumber);
@@ -302,28 +365,120 @@ public class EhrImportService {
                     record.setPhoneHash(Tokens.hash(normalisedPhone));
                     record.setPhoneMasked(maskPhone(normalisedPhone));
                 }
-
                 if (normalisedEmail != null) {
                     record.setEmailHash(Tokens.hash(normalisedEmail));
                     record.setEmailMasked(maskEmail(normalisedEmail));
                     record.setEmailEncrypted(secretEncryptor.encrypt(normalisedEmail));
                 }
 
-
-                record.setClinic(optional(row, "clinic"));
-                record.setPatientStatus(optional(row, "patient_status"));
+                String clinic = field(row, columns, "clinic");
+                String status = field(row, columns, "patient_status");
+                record.setClinic(clinic.isBlank() ? null : truncate(clinic, 100));
+                record.setPatientStatus(status.isBlank() ? null : truncate(status, 30));
                 record.setIsActiveRecord(true);
                 records.add(record);
             }
 
             if (total == 0) {
-                errors.add("The file has a header but no rows");
+                errors.add("The file has column names but no rows");
             }
         } catch (Exception e) {
             errors.add("Could not read the file as CSV: " + e.getMessage());
+            return new ParseResult(total, records, errors, true);
         }
 
-        return new ParseResult(total, records, errors);
+        return new ParseResult(total, records, errors, false);
+    }
+
+    /** Comma, semicolon or tab, whichever the header line uses most. */
+    private static char detectDelimiter(String text) {
+        int end = text.indexOf('\n');
+        String header = end < 0 ? text : text.substring(0, end);
+        long commas = header.chars().filter(c -> c == ',').count();
+        long semicolons = header.chars().filter(c -> c == ';').count();
+        long tabs = header.chars().filter(c -> c == '\t').count();
+        if (semicolons > commas && semicolons >= tabs) {
+            return ';';
+        }
+        if (tabs > commas && tabs > semicolons) {
+            return '\t';
+        }
+        return ',';
+    }
+
+    private static String canonical(String header) {
+        return header == null ? "" : header.trim().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "_").replaceAll("^_+|_+$", "");
+    }
+
+    /** Field name to the header actually used in this file. */
+    private static Map<String, String> resolveColumns(List<String> headers) {
+        Map<String, String> byCanonical = new java.util.HashMap<>();
+        for (String header : headers) {
+            byCanonical.putIfAbsent(canonical(header), header);
+        }
+        Map<String, String> resolved = new java.util.HashMap<>();
+        COLUMN_ALIASES.forEach((field, aliases) -> {
+            for (String alias : aliases) {
+                String header = byCanonical.get(alias);
+                if (header != null) {
+                    resolved.put(field, header);
+                    break;
+                }
+            }
+        });
+        // "status" alone is too vague to be a patient status if a clinic-style
+        // column already took it; nothing else needs de-duplicating.
+        return resolved;
+    }
+
+    private static boolean isBlankRow(CSVRecord row) {
+        for (String value : row) {
+            if (value != null && !value.isBlank()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String field(CSVRecord row, Map<String, String> columns, String field) {
+        String header = columns.get(field);
+        if (header == null || !row.isMapped(header) || !row.isSet(header)) {
+            return "";
+        }
+        String v = row.get(header);
+        return v == null ? "" : v.trim();
+    }
+
+    /** full_name, or first, middle and last name joined. */
+    private static String nameOf(CSVRecord row, Map<String, String> columns) {
+        String full = field(row, columns, "full_name");
+        if (!full.isBlank()) {
+            return truncate(full.replaceAll("\\s+", " "), 200);
+        }
+        String joined = String.join(" ", java.util.stream.Stream.of(
+                        field(row, columns, "first_name"),
+                        field(row, columns, "middle_name"),
+                        field(row, columns, "last_name"))
+                .filter(part -> !part.isBlank())
+                .toList());
+        return truncate(joined.replaceAll("\\s+", " "), 200);
+    }
+
+    private static String truncate(String value, int max) {
+        return value.length() <= max ? value : value.substring(0, max);
+    }
+
+    private static String report(ParseResult result, String headline) {
+        StringBuilder out = new StringBuilder(headline);
+        int shown = Math.min(result.errors.size(), MAX_REPORTED_ISSUES);
+        for (int i = 0; i < shown; i++) {
+            out.append('\n').append(result.errors.get(i));
+        }
+        if (result.errors.size() > shown) {
+            out.append('\n').append("... and ").append(result.errors.size() - shown).append(" more.");
+        }
+        return out.toString();
     }
 
     private String normaliseEmail(String raw) {
@@ -341,29 +496,43 @@ public class EhrImportService {
         return shown + "***" + normalised.substring(at);
     }
 
-    private String value(CSVRecord row, String column) {
-        try {
-            String v = row.get(column);
-            return v == null ? "" : v.trim();
-        } catch (IllegalArgumentException e) {
-            return "";
-        }
-    }
-
-    private String optional(CSVRecord row, String column) {
-        String v = row.isMapped(column) ? value(row, column) : "";
-        return v.isBlank() ? null : v;
-    }
-
-    private LocalDate parseDate(String raw) {
+    /**
+     * Reads the date forms hospital systems and spreadsheets produce: ISO,
+     * day-first with / - . or spaces, month names, two-digit years, a trailing
+     * time, and Excel's day-number dates.
+     */
+    static LocalDate parseDate(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
+        String value = raw.trim();
+        // Drop a trailing time: "1985-03-12 00:00:00", "1985-03-12T00:00".
+        value = value.replaceFirst("[T ]\\d{1,2}:\\d{2}(:\\d{2}(\\.\\d+)?)?\\s*([AaPp][Mm])?$", "").trim();
+
+        // Excel stores dates as days since 30 December 1899.
+        if (value.matches("\\d{4,5}(\\.0+)?")) {
+            int days = (int) Double.parseDouble(value);
+            if (days > 0 && days < 80000) {
+                return LocalDate.of(1899, 12, 30).plusDays(days);
+            }
+        }
         for (DateTimeFormatter format : DATE_FORMATS) {
             try {
-                return LocalDate.parse(raw, format);
+                LocalDate date = LocalDate.parse(value, format);
+                // Two-digit years: anything later than this year is last century.
+                if (date.isAfter(LocalDate.now()) && format.toString().contains("ReducedValue")) {
+                    date = date.minusYears(100);
+                }
+                return date;
             } catch (DateTimeParseException ignored) {
                 // try the next format
+            }
+        }
+        for (DateTimeFormatter format : MONTH_FIRST_FORMATS) {
+            try {
+                return LocalDate.parse(value, format);
+            } catch (DateTimeParseException ignored) {
+                // not month-first either
             }
         }
         return null;
@@ -397,6 +566,6 @@ public class EhrImportService {
         return "*******" + normalised.substring(normalised.length() - 4);
     }
 
-    private record ParseResult(int totalRows, List<EhrVerificationRecord> records, List<String> errors) {
+    private record ParseResult(int totalRows, List<EhrVerificationRecord> records, List<String> errors, boolean fatal) {
     }
 }
