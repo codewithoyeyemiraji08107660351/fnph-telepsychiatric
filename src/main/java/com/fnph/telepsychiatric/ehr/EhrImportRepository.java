@@ -14,5 +14,7 @@ public interface EhrImportRepository extends JpaRepository<EhrVerificationImport
 
     boolean existsByFileChecksum(String checksum);
 
+    Optional<EhrVerificationImport> findByFileChecksum(String checksum);
+
     List<EhrVerificationImport> findTop20ByOrderByUploadedAtDesc();
 }

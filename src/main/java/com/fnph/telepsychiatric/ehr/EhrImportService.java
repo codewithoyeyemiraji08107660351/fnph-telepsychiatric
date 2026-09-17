@@ -86,7 +86,12 @@ public class EhrImportService {
         }
 
         String checksum = Tokens.hash(new String(bytes, StandardCharsets.UTF_8));
-        if (importRepository.existsByFileChecksum(checksum)) {
+        // One import per file (the checksum is unique). A file whose earlier import
+        // was rejected may be checked again: the rejection may have come from a
+        // server fault rather than the data, and the unique key would otherwise
+        // block that file for ever. Its import record is reused.
+        EhrVerificationImport previous = importRepository.findByFileChecksum(checksum).orElse(null);
+        if (previous != null && previous.getStatus() != ImportStatus.REJECTED) {
             throw new IllegalArgumentException(
                     "This exact file has already been uploaded. Export a fresh snapshot, "
                             + "or activate the existing import instead.");
@@ -96,7 +101,14 @@ public class EhrImportService {
             throw new IllegalArgumentException("The extract date cannot be in the future");
         }
 
-        EhrVerificationImport ehrImport = new EhrVerificationImport();
+        EhrVerificationImport ehrImport = previous != null ? previous : new EhrVerificationImport();
+        if (previous != null) {
+            ehrImport.setValidationReport(null);
+            ehrImport.setRowCount(0);
+            ehrImport.setValidRowCount(0);
+            ehrImport.setRejectedRowCount(0);
+            log.info("Re-checking previously rejected EHR import {}", previous.getPublicId());
+        }
         ehrImport.setFileName(file.getOriginalFilename());
         ehrImport.setFileChecksum(checksum);
         ehrImport.setFileSizeBytes((long) bytes.length);
