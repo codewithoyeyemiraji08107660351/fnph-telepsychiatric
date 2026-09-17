@@ -122,7 +122,7 @@ application:
       #   openssl rand -base64 32
       # Rotating this makes every enrolled second factor undecryptable, so every
       # user has to enrol again. Treat it as permanent.
-      key: tcrOKEhI9rSWZC8BmBsQEHRsDpJGhuJRLze+ABSQNcY
+      key: ${ENCRYPTION_KEY}
 
     auth:
       # Per-username lockout.

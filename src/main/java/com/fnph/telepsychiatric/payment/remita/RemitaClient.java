@@ -76,15 +76,17 @@ public class RemitaClient {
         String hash = sha512(properties.getMerchantId() + properties.getServiceTypeId()
                 + orderId + amount.toPlainString() + properties.getApiKey());
 
-        Map<String, Object> body = Map.of(
-                "serviceTypeId", properties.getServiceTypeId(),
-                "amount", amount.toPlainString(),
-                "orderId", orderId,
-                "payerName", payerName,
-                "payerEmail", payerEmail,
-                "payerPhone", payerPhone == null ? "" : payerPhone,
-                "description", "FNPH Kaduna telepsychiatry consultation",
-                "responseurl", properties.getResponseUrl());
+        // Map.of rejects null values, and a patient who skipped the optional
+        // email made this throw before Remita was ever called.
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("serviceTypeId", properties.getServiceTypeId());
+        body.put("amount", amount.toPlainString());
+        body.put("orderId", orderId);
+        body.put("payerName", payerName == null ? "" : payerName);
+        body.put("payerEmail", payerEmail == null ? "" : payerEmail);
+        body.put("payerPhone", payerPhone == null ? "" : payerPhone);
+        body.put("description", "FNPH Kaduna telepsychiatry consultation");
+        body.put("responseurl", properties.getResponseUrl());
 
         String raw = client().post()
                 .uri("/echannelsvc/merchant/api/paymentinit")
@@ -113,6 +115,10 @@ public class RemitaClient {
         String raw = client().get()
                 .uri("/echannelsvc/{merchantId}/{rrr}/{hash}/status.reg.json",
                         properties.getMerchantId(), rrr, hash)
+                // Remita authenticates the status call with the same hash as the
+                // path, not the API token the client sends by default.
+                .header("Authorization", "remitaConsumerKey=%s,remitaConsumerToken=%s"
+                        .formatted(properties.getMerchantId(), hash))
                 .retrieve()
                 .bodyToMono(String.class)
                 .timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
@@ -156,12 +162,12 @@ public class RemitaClient {
             // booking for someone who has not paid.
             boolean paid = "00".equals(status) || "01".equals(status);
 
-            return new VerificationResult(true, paid, status, message, amount,
+            return new VerificationResult(true, paid, PENDING_CODES.contains(status), status, message, amount,
                     text(node, "orderId"), text(node, "transactiontime"),
                     text(node, "paymentDate"), raw);
         } catch (Exception e) {
             log.error("Could not parse Remita verification response: {}", e.getMessage());
-            return new VerificationResult(false, false, "PARSE_ERROR", e.getMessage(),
+            return new VerificationResult(false, false, false, "PARSE_ERROR", e.getMessage(),
                     null, null, null, null, raw);
         }
     }
@@ -213,7 +219,7 @@ public class RemitaClient {
         log.error("Remita verification unavailable for {}: {}", rrr, t.getMessage());
         // reachable=false, so the caller leaves the payment PENDING and retries.
         // Treating unreachable as unpaid would strand a patient who has paid.
-        return new VerificationResult(false, false, "UNAVAILABLE", t.getMessage(),
+        return new VerificationResult(false, false, false, "UNAVAILABLE", t.getMessage(),
                 null, null, null, null, null);
     }
 
@@ -221,7 +227,14 @@ public class RemitaClient {
                                    String message, String rawResponse) {
     }
 
-    public record VerificationResult(boolean reachable, boolean paid, String statusCode,
+    /**
+     * Remita codes meaning "the RRR exists and has not been paid yet": 021
+     * transaction pending, 025 reference generated, 040 initial request OK.
+     * A payment in this state is waiting for the patient, not failed.
+     */
+    static final java.util.Set<String> PENDING_CODES = java.util.Set.of("021", "025", "040");
+
+    public record VerificationResult(boolean reachable, boolean paid, boolean pending, String statusCode,
                                      String message, BigDecimal amount, String orderId,
                                      String transactionTime, String paymentDate,
                                      String rawResponse) {

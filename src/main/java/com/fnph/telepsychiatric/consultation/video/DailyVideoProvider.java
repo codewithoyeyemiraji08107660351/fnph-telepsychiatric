@@ -77,7 +77,11 @@ public class DailyVideoProvider implements VideoProvider {
 
         // Off unless governance has approved it. Passed explicitly so the
         // decision is visible here rather than buried in a default.
-        properties0.put("enable_recording", enableRecording ? "cloud" : false);
+        // Daily takes a string here. Omitted when recording is off; a boolean
+        // false is not a value the API accepts.
+        if (enableRecording) {
+            properties0.put("enable_recording", "cloud");
+        }
 
         Map<String, Object> body = Map.of(
                 "name", roomName,
@@ -85,12 +89,30 @@ public class DailyVideoProvider implements VideoProvider {
                 "privacy", "private",
                 "properties", properties0);
 
-        String raw = client().post().uri("/rooms")
-                .bodyValue(body)
-                .retrieve()
-                .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
-                .block();
+        String raw;
+        try {
+            raw = client().post().uri("/rooms")
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
+                    .block();
+        } catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
+            // A join that failed after the room was created (the token call,
+            // say) leaves the room at Daily but not in our database. The next
+            // join asks for the same name and Daily refuses, so that
+            // appointment could never open. Use the room that exists.
+            if (e.getStatusCode().value() == 400 && e.getResponseBodyAsString().contains("already exists")) {
+                log.info("Video room {} already exists at the provider; reusing it", roomName);
+                raw = client().get().uri("/rooms/{name}", roomName)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
+                        .block();
+            } else {
+                throw e;
+            }
+        }
 
         try {
             JsonNode node = objectMapper.readTree(raw);

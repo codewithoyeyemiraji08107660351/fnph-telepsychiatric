@@ -14,6 +14,7 @@ import com.fnph.telepsychiatric.payment.remita.RemitaClient;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -71,7 +72,11 @@ public class PaymentService {
      * booking was rejected pays the difference, or nothing at all if the credit
      * covers the fee.
      */
-    @Transactional
+
+    /** Remita requires a payer email; used when neither the patient nor the record has one. */
+    @Value("${application.notification.email.from}")
+    private String fallbackPayerEmail;
+
     public Payment initiate(Patient patient, String payerEmail, String payerPhone) {
         BigDecimal fee = configuration.getDecimal(ConfigurationKeys.CONSULTATION_FEE_NGN);
 
@@ -125,10 +130,14 @@ public class PaymentService {
             return payment;
         }
 
+        // Remita requires an email. Typed, then the patient record, then the
+        // hospital's sending address, so a patient who skipped it can still pay.
+        String email = firstUsableEmail(payerEmail, patient.getEmail(), fallbackPayerEmail);
+        String phone = payerPhone != null && !payerPhone.isBlank() ? payerPhone.trim() : patient.getPhoneNumber();
         RemitaClient.InitiationResult result = remitaClient.initiate(
                 reference, payable,
                 patient.getFirstName() + " " + patient.getLastName(),
-                payerEmail, payerPhone);
+                email, phone);
 
         payment.setInitiationResponse(result.rawResponse());
 
@@ -208,12 +217,23 @@ public class PaymentService {
             return payment;
         }
 
+        if (!result.paid() && result.pending()) {
+            // The RRR exists and the patient has not paid yet. The payment page
+            // checks every half minute from the moment the RRR appears; marking
+            // this FAILED told every patient their payment had failed before
+            // they had a chance to make it.
+            paymentRepository.save(payment);
+            return payment;
+        }
         if (!result.paid()) {
+            boolean alreadyFailed = payment.getStatus() == PaymentStatus.FAILED;
             payment.setStatus(PaymentStatus.FAILED);
             payment.setFailureReason("Remita status " + result.statusCode()
                     + ": " + result.message());
             paymentRepository.save(payment);
-            notifyPatientOfFailure(payment);
+            if (!alreadyFailed) {
+                notifyPatientOfFailure(payment);
+            }
             return payment;
         }
 
@@ -429,5 +449,15 @@ public class PaymentService {
         public PaymentException(String message) {
             super(message);
         }
+    }
+
+    private static String firstUsableEmail(String... candidates) {
+        for (String candidate : candidates) {
+            if (candidate != null && candidate.contains("@")
+                    && !candidate.trim().toLowerCase().endsWith(".local")) {
+                return candidate.trim();
+            }
+        }
+        return "";
     }
 }
