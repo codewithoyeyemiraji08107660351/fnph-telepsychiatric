@@ -214,19 +214,34 @@ public class TriageController {
                     **Requires** `consent.accept`.
                     """)
     @ApiResponse(responseCode = "201", description = "Recorded.")
-    public ResponseEntity<Map<String, Object>> accept(HttpServletRequest http) {
+    public ResponseEntity<Map<String, Object>> accept(@RequestBody ConsentRequest request, HttpServletRequest http) {
+        if (request.version() == null || !request.read())
+            throw new TriageService.TriageException("Read the complete agreement before signing.");
         var principal = CurrentUser.require();
         var patient = patientRepository.findById(principal.getPatientId())
                 .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException(
                         "No patient record on this account"));
 
         ConsentAcceptance acceptance = triageService.accept(patient, "FNPH_PATIENT",
-                principal.getUsername(), null, clientIp(http), http.getHeader("User-Agent"));
+                principal.getUsername(), null, clientIp(http), http.getHeader("User-Agent"),
+                request.version(), request.signature(), request.declarations());
 
         return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
                 "publicId", acceptance.getPublicId(),
                 "version", acceptance.getConsentVersion(),
                 "acceptedAt", acceptance.getAcceptedAt()));
+    }
+
+    public record ConsentRequest(String version, boolean read, String signature, List<Boolean> declarations) {}
+
+    @GetMapping("/consent/mine")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CONSENT_ACCEPT)")
+    public Map<String, Object> receipt() {
+        return triageService.currentConsent(CurrentUser.require().getPatientId())
+                .filter(a -> a.getConsentVersion().equals(triageService.activeConsent("FNPH_PATIENT").getVersion()))
+                .map(a -> Map.<String, Object>of("publicId", a.getPublicId(), "version", a.getConsentVersion(),
+                        "acceptedAt", a.getAcceptedAt(), "signature", a.getTypedSignature() == null ? "" : a.getTypedSignature()))
+                .orElse(Map.of());
     }
 
     // -----------------------------------------------------------------

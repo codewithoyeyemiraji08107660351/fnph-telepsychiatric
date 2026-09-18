@@ -87,7 +87,7 @@ public class EhrVerificationService {
                     + "hospital card, or request help below.";
 
     private final EhrImportRepository importRepository;
-    private final EhrRecordRepository recordRepository;
+    private final ManualEhrRecordService manualEhrRecordService;
     private final EhrLookupAttemptRepository attemptRepository;
     private final ContactVerificationRepository contactRepository;
     private final PatientVerificationRequestRepository requestRepository;
@@ -150,14 +150,12 @@ public class EhrVerificationService {
                     "Enrolment is temporarily unavailable. Please try again later.");
         }
 
-        Optional<EhrVerificationRecord> found = recordRepository
-                .findByEhrImportIdAndEhrNumber(active.get().getId(), ehrNumber);
+        EhrVerificationRecord snapshot = manualEhrRecordService.effectiveRecord(active.get().getId(), ehrNumber);
 
-        if (found.isEmpty()) {
+        if (snapshot == null) {
             record(ehrNumber, LookupOutcome.NOT_FOUND, ipAddress, userAgent);
             throw new EnrolmentException(GENERIC_FAILURE);
         }
-        EhrVerificationRecord snapshot = found.get();
 
         if (!Boolean.TRUE.equals(snapshot.getIsActiveRecord())) {
             record(ehrNumber, LookupOutcome.RECORD_INACTIVE, ipAddress, userAgent);
@@ -309,10 +307,11 @@ public class EhrVerificationService {
         EhrVerificationImport active = importRepository.findFirstByStatus(ImportStatus.ACTIVE)
                 .orElseThrow(() -> new EnrolmentException("Enrolment is temporarily unavailable."));
 
-        EhrVerificationRecord snapshot = recordRepository
-                .findByEhrImportIdAndEhrNumber(active.getId(), verification.getEhrNumber())
-                .orElseThrow(() -> new EnrolmentException(
-                        "That record is no longer available. Request help below."));
+        EhrVerificationRecord snapshot = manualEhrRecordService
+                .effectiveRecord(active.getId(), verification.getEhrNumber());
+        if (snapshot == null) {
+            throw new EnrolmentException("That record is no longer available. Request help below.");
+        }
 
         if (patientRepository.existsByEhrNumber(snapshot.getEhrNumber())) {
             throw new EnrolmentException("That record is already enrolled.");

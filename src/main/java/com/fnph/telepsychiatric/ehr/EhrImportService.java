@@ -360,6 +360,7 @@ public class EhrImportService {
                 if (normalisedPhone != null) {
                     record.setPhoneHash(Tokens.hash(normalisedPhone));
                     record.setPhoneMasked(maskPhone(normalisedPhone));
+                    record.setPhoneEncrypted(secretEncryptor.encrypt(normalisedPhone));
                 }
                 if (normalisedEmail != null) {
                     record.setEmailHash(Tokens.hash(normalisedEmail));
