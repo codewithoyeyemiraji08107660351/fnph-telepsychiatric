@@ -87,14 +87,13 @@ public class TriageService {
         TriageQuestion stoppedOn = null;
         for (TriageQuestion question : set.getQuestions()) {
             String given = answers.get(question.getPublicId());
-            if (given == null) {
+            if (given == null || !List.of("YES", "NO").contains(given)) {
                 throw new TriageException(
                         "Every question has to be answered. Question " + question.getSequence()
                                 + " was not.");
             }
-            if (question.getStopAnswer().equalsIgnoreCase(given.trim())) {
+            if (stoppedOn == null && question.getStopAnswer().equalsIgnoreCase(given.trim())) {
                 stoppedOn = question;
-                break;
             }
         }
 
@@ -201,9 +200,24 @@ public class TriageService {
     @Transactional
     public ConsentAcceptance accept(Patient patient, String audience, String acceptedBy,
                                     String witnessedBy, String ipAddress, String userAgent) {
+        return accept(patient, audience, acceptedBy, witnessedBy, ipAddress, userAgent, null, null, null);
+    }
+
+    @Transactional
+    public ConsentAcceptance accept(Patient patient, String audience, String acceptedBy,
+                                    String witnessedBy, String ipAddress, String userAgent,
+                                    String version, String signature, List<Boolean> declarations) {
         ConsentDocument document = activeConsent(audience);
+        if (version != null && !document.getVersion().equals(version))
+            throw new TriageException("The agreement has changed. Read the current version before signing.");
+        if (version != null && (signature == null || signature.trim().split("\\s+").length < 2
+                || signature.length() > 150 || declarations == null || declarations.size() != 6
+                || declarations.stream().anyMatch(v -> !Boolean.TRUE.equals(v))))
+            throw new TriageException("Complete all six declarations and enter your full name.");
 
         ConsentAcceptance acceptance = new ConsentAcceptance();
+        acceptance.setTypedSignature(signature == null ? null : signature.trim());
+        if (declarations != null) acceptance.setDeclarationsJson(declarations.toString());
         acceptance.setConsentDocument(document);
         // Recorded on the row as well as referenced, so it survives the
         // document being retired.

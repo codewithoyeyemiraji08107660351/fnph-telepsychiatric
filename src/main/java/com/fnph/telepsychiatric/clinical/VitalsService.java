@@ -122,7 +122,7 @@ public class VitalsService {
         return Math.round((weightKg / (metres * metres)) * 10.0) / 10.0;
     }
 
-    private void validate(VitalsEntry e) {
+    public void validate(VitalsEntry e) {
         // Wide on purpose. These catch a slipped decimal point, not an unusual
         // patient, and a rule that rejects a real reading is worse than none.
         range("Systolic blood pressure", e.systolic(), 50, 300);

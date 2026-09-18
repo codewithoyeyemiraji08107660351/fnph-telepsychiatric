@@ -222,27 +222,37 @@ public class GlobalExceptionHandler {
             CentreBookingService.CentreBookingException.class,
             CentreWalletService.InsufficientWalletException.class
     })
-    public void handleDomainRefusal(RuntimeException ex) {
-               log.info("Request refused: {}", ex.getMessage());
-//               return build(HttpStatus.CONFLICT, HttpSender.Request);
+    public ResponseEntity<ErrorResponse> handleDomainRefusal(RuntimeException ex, HttpServletRequest request) {
+        log.info("Request refused: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.builder()
+                .timestamp(LocalDateTime.now()).status(409).error("Request refused")
+                .message(ex.getMessage()).path(request.getRequestURI()).build());
     }
 
     @ExceptionHandler(AuthenticationService.AuthenticationFailedException.class)
-    public void handleAuthenticationFailed(
-            AuthenticationService.AuthenticationFailedException ex) {
-        //return build(HttpStatus.UNAUTHORIZED, "Unauthorized", ex.getMessage());
+    public ResponseEntity<ErrorResponse> handleAuthenticationFailed(
+            AuthenticationService.AuthenticationFailedException ex, HttpServletRequest request) {
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.UNAUTHORIZED.value())
+                .error("Unauthorized")
+                .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .build();
+
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse);
     }
     @ExceptionHandler({
             DailyVideoProvider.VideoProviderException.class,
             StorageService.StorageException.class
     })
-//    public ResponseEntity<ErrorResponse> handleDependencyFailure(RuntimeException ex) {
-//        log.error("Dependency failure", ex);
-//        return ErrorResponse.builder()
-//                        .message("\"Service Unavailable")
-//                                .
-//                build();
-//    }
+    public ResponseEntity<ErrorResponse> handleDependencyFailure(RuntimeException ex, HttpServletRequest request) {
+        log.error("Dependency failure", ex);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ErrorResponse.builder()
+                .timestamp(LocalDateTime.now()).status(503).error("Service unavailable")
+                .message("This service is temporarily unavailable. Please try again.")
+                .path(request.getRequestURI()).build());
+    }
 
     private String getPath() {
         // In a real implementation, you would get the current request path

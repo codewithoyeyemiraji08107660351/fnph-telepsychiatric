@@ -50,7 +50,7 @@ public class AuthenticationService {
     private final AuthProperties properties;
 
     private static final String GENERIC_FAILURE =
-            "Those sign-in details are not correct, or the account is not available.";
+            "Incorrect username or password. Please check your details and try again.";
 
     // -----------------------------------------------------------------
     // Sign-in

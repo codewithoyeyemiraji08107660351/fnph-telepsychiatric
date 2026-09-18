@@ -34,17 +34,18 @@ public class EhrImportController {
     @Operation(
             summary = "Upload a snapshot of the offline EHR",
             description = """
-                    Parses and validates a CSV export. **Does not activate it**; that is a
-                    separate, deliberate step.
+                    Parses and validates a CSV export, then **automatically activates**
+                    its usable rows and supersedes the previous snapshot in one transaction.
 
-                    Required columns: `ehr_number`, `full_name`, `date_of_birth`,
-                    `phone_number`. Optional: `clinic`, `patient_status`. Dates may be
+                    Required columns: `ehr_number`, `full_name`, `date_of_birth` (common
+                    aliases and split names are accepted). Optional: `phone_number`,
+                    `email`, `clinic`, `patient_status`. Dates may be
                     `YYYY-MM-DD`, `DD/MM/YYYY` or `DD-MM-YYYY`.
 
-                    **A single bad row rejects the whole file.** A partial import leaves
-                    half a patient list loaded with no way to tell which half, and it
-                    surfaces later as a patient who cannot enrol for no visible reason.
-                    `validationReport` names every failing line.
+                    Invalid rows are skipped and reported in `validationReport`.
+                    An unreadable file, missing required columns or no usable rows
+                    rejects the import and leaves the current active snapshot unchanged.
+                    Activation retains drift checks and records the uploader in the audit trail.
 
                     `sourceAsAt` is the date the hospital **extracted** the file, not
                     today. Every screen relying on this snapshot shows its age, and getting
@@ -52,8 +53,8 @@ public class EhrImportController {
 
                     Phone numbers are normalised to their last nine digits, so the same
                     number written `08012345678`, `+2348012345678` and `2348012345678`
-                    matches. Date of birth and phone are stored hashed with masked display
-                    forms only; the plaintext is never persisted.
+                    matches. Date of birth and phone have hashed and masked forms;
+                    date of birth and email are also stored encrypted for authorised use.
 
                     Uploading the same file twice is refused by checksum.
 
@@ -61,7 +62,7 @@ public class EhrImportController {
                     """)
     @ApiResponses({
             @ApiResponse(responseCode = "200",
-                    description = "Parsed. Check `status`: VALIDATED can be activated, REJECTED "
+                    description = "Parsed. Check `status`: ACTIVE is ready for enrolment, REJECTED "
                             + "means nothing was loaded.",
                     content = @Content(schema = @Schema(implementation = EhrImportResponse.class))),
             @ApiResponse(responseCode = "400",
@@ -97,10 +98,9 @@ public class EhrImportController {
 
                     Only a VALIDATED import can be activated.
 
-                    **Requires** `ehr_import.activate`, held by HIM and the Central
-                    Administrator. ICT Support can upload but not activate: deciding which
-                    snapshot the hospital enrols patients against is a records decision,
-                    not a technical one.
+                    Retained for older VALIDATED imports. New successful uploads activate
+                    automatically with `ehr_import.upload` and need no separate call.
+                    This legacy endpoint requires `ehr_import.activate`.
                     """)
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Activated. Enrolment now matches "

@@ -29,6 +29,7 @@ public class PaymentController {
     private final PaymentService paymentService;
     private final PatientCreditService creditService;
     private final PatientRepository patientRepository;
+    private final com.fnph.telepsychiatric.patient.PatientJourneyService journey;
 
     @PostMapping("/initiate")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).PAYMENT_INITIATE)")
@@ -70,6 +71,7 @@ public class PaymentController {
         var patient = patientRepository.findById(CurrentUser.require().getPatientId())
                 .orElseThrow(() -> new EntityNotFoundException("No patient record on this account"));
 
+        journey.requireIntake(patient.getId());
         return ResponseEntity.ok(toResponse(paymentService.initiate(patient, email, phone)));
     }
 

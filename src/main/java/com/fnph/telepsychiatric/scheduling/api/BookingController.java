@@ -33,6 +33,24 @@ import java.util.List;
 public class BookingController {
 
     private final BookingService bookingService;
+    private final com.fnph.telepsychiatric.patient.PatientJourneyService journey;
+
+    public record SubmitRequest(String intakePublicId, String slotPublicId) {}
+
+    @PostMapping("/request")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).SLOT_HOLD)")
+    public ScheduleDtos.AppointmentResponse submit(@RequestBody SubmitRequest request) {
+        return toResponse(journey.submit(CurrentUser.require().getPatientId(), request.intakePublicId(), request.slotPublicId()));
+    }
+
+    @GetMapping("/days")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).SLOT_READ)")
+    public List<LocalDate> days() {
+        journey.requirePayment(CurrentUser.require().getPatientId());
+        LocalDate end = LocalDate.now().plusMonths(3);
+        return bookingService.bookableSlots(ScheduleAudience.FNPH_PATIENT).stream()
+                .map(s -> s.getStartAt().toLocalDate()).filter(d -> !d.isAfter(end)).distinct().sorted().toList();
+    }
     private final AppointmentRepository appointmentRepository;
     private final PatientRepository patientRepository;
     private final com.fnph.telepsychiatric.triage.TriageService triageService;
@@ -62,6 +80,12 @@ public class BookingController {
             @Parameter(description = "The date to look at.", example = "2026-11-02", required = true)
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
 
+        if (CurrentUser.patientId().isPresent()) {
+            journey.requirePayment(CurrentUser.require().getPatientId());
+            if (date.isBefore(LocalDate.now()) || date.isAfter(LocalDate.now().plusMonths(3))) {
+                throw new IllegalArgumentException("Choose a published date within the next three months");
+            }
+        }
         return ResponseEntity.ok(
                 bookingService.availableTimes(ScheduleAudience.FNPH_PATIENT, date).stream()
                         .map(t -> new ScheduleDtos.AvailableTimeResponse(
@@ -112,7 +136,10 @@ public class BookingController {
         triageService.requireClearedForBooking(patient.getId(), "FNPH_PATIENT");
 
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(toResponse(bookingService.holdSlot(patient, request.slotPublicId())));
+                .body(toResponse(journey.submit(patient.getId(),
+                        java.util.Optional.ofNullable(journey.current(patient.getId()))
+                                .orElseThrow(() -> new IllegalArgumentException("Complete consultation information first")).publicId(),
+                        request.slotPublicId())));
     }
 
     @GetMapping("/mine")

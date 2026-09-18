@@ -22,6 +22,10 @@ import java.time.LocalDateTime;
 @Getter
 @Setter
 public class ConsentAcceptance extends ImmutableEntity {
+    @Column(name = "typed_signature", length = 150)
+    private String typedSignature;
+    @Column(name = "declarations_json", columnDefinition = "TEXT")
+    private String declarationsJson;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "consent_document_id", nullable = false)

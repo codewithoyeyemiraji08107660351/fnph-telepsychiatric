@@ -30,18 +30,10 @@ import java.util.Map;
 /**
  * Uploading, validating and activating an EHR snapshot.
  *
- * <h2>Validate everything before committing anything</h2>
- *
- * A malformed row rejects the whole file. A partial import leaves half a
- * patient list loaded with no way to tell which half, and the failure surfaces
- * later as a patient who cannot enrol for no visible reason.
- *
- * <h2>Upload and activate are two steps</h2>
- *
- * Uploading parses and validates. Activating makes the snapshot the one
- * enrolment matches against, and supersedes the previous one. Splitting them
- * means a file can be checked, its report read, and the switch made
- * deliberately rather than as a side effect of a drag and drop.
+ * Uploading validates the file and automatically activates its usable rows in
+ * the same transaction, superseding the previous snapshot. Rejected rows are
+ * listed in the validation report. A file with no usable rows is rejected and
+ * leaves the active snapshot unchanged.
  *
  * <h2>Drift is flagged, never applied</h2>
  *
@@ -132,8 +124,7 @@ public class EhrImportService {
         EhrVerificationImport previous = importRepository.findByFileChecksum(checksum).orElse(null);
         if (previous != null && previous.getStatus() != ImportStatus.REJECTED) {
             throw new IllegalArgumentException(
-                    "This exact file has already been uploaded. Export a fresh snapshot, "
-                            + "or activate the existing import instead.");
+                    "This exact file has already been uploaded. Export a fresh snapshot.");
         }
 
         if (sourceAsAt.isAfter(LocalDate.now())) {
@@ -190,7 +181,7 @@ public class EhrImportService {
 
         log.info("EHR import {} validated: {} of {} rows loaded, extract dated {}",
                 ehrImport.getPublicId(), result.records.size(), result.totalRows, sourceAsAt);
-        return ehrImport;
+        return activateValidated(ehrImport, "Automatically activated after successful upload");
     }
 
     /**
@@ -205,6 +196,11 @@ public class EhrImportService {
         EhrVerificationImport ehrImport = importRepository.findByPublicId(importPublicId)
                 .orElseThrow(() -> new IllegalArgumentException("No such import"));
 
+        return activateValidated(ehrImport, reason);
+    }
+
+    /** Shared by automatic upload activation and the legacy activation endpoint. */
+    private EhrVerificationImport activateValidated(EhrVerificationImport ehrImport, String reason) {
         if (ehrImport.getStatus() != ImportStatus.VALIDATED) {
             throw new IllegalArgumentException(
                     "Only a validated import can be activated. This one is "
