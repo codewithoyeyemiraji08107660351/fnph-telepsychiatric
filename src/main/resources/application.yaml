@@ -147,7 +147,7 @@ application:
       max-mfa-attempts: 5
       mfa-lockout-minutes: 15
       mfa-challenge-minutes: 5
-      mfa-required: ${MFA_REQUIRED:true}
+      mfa-required: ${MFA_REQUIRED:false}
       recovery-code-count: 10
 
 
