@@ -42,7 +42,7 @@ public class RoomAvailabilityController {
     private final RoomRepository roomRepository;
     private final DoctorAvailabilityRepository availabilityRepository;
     private final UserRepository userRepository;
-    private final com.fnph.telepsychiatric.scheduling.SlotRepository slotRepository;
+    private final SlotRepository slotRepository;
 
     @GetMapping("/rooms")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).ROOM_READ)")
@@ -146,15 +146,15 @@ public class RoomAvailabilityController {
         // taken so someone moves those appointments.
         LocalDateTime now = LocalDateTime.now();
         var open = slotRepository.findAllByRoomIdAndStateAndStartAtAfter(
-                room.getId(), com.fnph.telepsychiatric.scheduling.SlotState.AVAILABLE, now);
+                room.getId(), SlotState.AVAILABLE, now);
         for (var slot : open) {
-            slot.setState(com.fnph.telepsychiatric.scheduling.SlotState.BLOCKED);
+            slot.setState(SlotState.BLOCKED);
             slot.setBlockedReason("Room " + room.getCode() + " taken out of service");
         }
         slotRepository.saveAll(open);
         long taken = slotRepository.countByRoomIdAndStateInAndStartAtAfter(room.getId(),
-                List.of(com.fnph.telepsychiatric.scheduling.SlotState.HELD,
-                        com.fnph.telepsychiatric.scheduling.SlotState.BOOKED), now);
+                List.of(SlotState.HELD,
+                        SlotState.BOOKED), now);
 
         Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("roomCode", room.getCode());
@@ -245,7 +245,7 @@ public class RoomAvailabilityController {
                     """)
     @ApiResponse(responseCode = "200", description = "Availability returned.")
     // Rows name each doctor, a lazy association.
-    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    @Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> availability(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate serviceDate) {
 

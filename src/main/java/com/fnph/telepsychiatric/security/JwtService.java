@@ -181,15 +181,15 @@ public class JwtService {
         return build(claims, user.getUsername(), minutes, ChronoUnit.MINUTES, null);
     }
 
-    public java.util.Optional<String> extractChallengeSubject(String token) {
+    public Optional<String> extractChallengeSubject(String token) {
         try {
             Claims claims = parse(token);
             if (!TokenType.CHALLENGE.name().equals(claims.get(CLAIM_TOKEN_TYPE, String.class))) {
-                return java.util.Optional.empty();
+                return Optional.empty();
             }
-            return java.util.Optional.of(claims.getSubject());
+            return Optional.of(claims.getSubject());
         } catch (JwtException | IllegalArgumentException ex) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
     }
 

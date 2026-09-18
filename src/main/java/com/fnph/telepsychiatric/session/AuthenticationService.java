@@ -13,6 +13,8 @@ import com.fnph.telepsychiatric.user.Users;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,12 +53,16 @@ public class AuthenticationService {
 
     private static final String GENERIC_FAILURE =
             "Incorrect username or password. Please check your details and try again.";
+    private static final String DUMMY_PASSWORD_HASH =
+            new BCryptPasswordEncoder(12).encode("unused-sign-in-timing-placeholder");
 
     // -----------------------------------------------------------------
     // Sign-in
     // -----------------------------------------------------------------
 
-    @Transactional
+    // AuthenticationFailedException is the expected outcome of a rejected sign-in.
+    // Keep its audit row and account/factor lockout updates instead of rolling them back.
+    @Transactional(noRollbackFor = AuthenticationFailedException.class)
     public LoginResponse login(LoginRequest request, RequestContext context) {
         String identifier = request.username().trim();
 
@@ -72,12 +78,22 @@ public class AuthenticationService {
         if (found.isEmpty()) {
             // Still hash something, so a missing account does not return
             // measurably faster than a wrong password.
-            passwordEncoder.matches(request.password(), "$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinva");
+            passwordEncoder.matches(request.password(), DUMMY_PASSWORD_HASH);
             record(identifier, null, LoginOutcome.UNKNOWN_USERNAME, null, context);
             throw new AuthenticationFailedException(GENERIC_FAILURE);
         }
 
         Users user = found.get();
+
+        // The same account can be entered by username or email. Count both
+        // aliases together so switching identifiers cannot bypass lockout.
+        if (loginAttemptRepository.countRecentFailuresForUser(user.getId(),
+                LocalDateTime.now().minusMinutes(properties.getFailureWindowMinutes()))
+                >= properties.getMaxFailedAttempts()) {
+            record(identifier, user, LoginOutcome.RATE_LIMITED, "Too many attempts", context);
+            throw new AuthenticationFailedException(
+                    "Too many attempts. Wait a few minutes before trying again.");
+        }
 
         if (user.getStatus() == UserStatus.INVITED) {
             record(identifier, user, LoginOutcome.ACCOUNT_NOT_ACTIVATED, null, context);
@@ -93,11 +109,17 @@ public class AuthenticationService {
         }
         if (!passwordEncoder.matches(request.password(), user.getPassword())) {
             record(identifier, user, LoginOutcome.BAD_CREDENTIALS, null, context);
-            applyLockoutIfNeeded(user, identifier);
+            applyLockoutIfNeeded(user);
             throw new AuthenticationFailedException(GENERIC_FAILURE);
         }
 
-        SecurityUser principal = (SecurityUser) userDetailsService.loadUserByUsername(user.getUsername());
+        SecurityUser principal;
+        try {
+            principal = (SecurityUser) userDetailsService.loadUserByUsername(user.getUsername());
+        } catch (UsernameNotFoundException ex) {
+            record(identifier, user, LoginOutcome.NO_ROLE_ASSIGNED, null, context);
+            throw new AuthenticationFailedException(GENERIC_FAILURE);
+        }
 
         if (mfaService.isRequiredFor(principal.getScope())) {
             if (!mfaService.isEnrolled(user.getId())) {
@@ -117,13 +139,13 @@ public class AuthenticationService {
         return completeLogin(user, principal, context);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = AuthenticationFailedException.class)
     public LoginResponse verifyMfa(MfaVerificationRequest request, RequestContext context) {
         Users user = requireChallengeSubject(request.mfaToken());
 
         if (!mfaService.verifyChallenge(user, request.code(), context.ipAddress())) {
             record(user.getUsername(), user, LoginOutcome.MFA_FAILED, null, context);
-            applyLockoutIfNeeded(user, user.getUsername());
+            applyLockoutIfNeeded(user);
             throw new AuthenticationFailedException("That code is not correct.");
         }
 
@@ -407,9 +429,9 @@ public class AuthenticationService {
                 >= properties.getMaxFailedAttemptsPerIp();
     }
 
-    private void applyLockoutIfNeeded(Users user, String identifier) {
+    private void applyLockoutIfNeeded(Users user) {
         LocalDateTime since = LocalDateTime.now().minusMinutes(properties.getFailureWindowMinutes());
-        long failures = loginAttemptRepository.countRecentFailuresForUsername(identifier, since);
+        long failures = loginAttemptRepository.countRecentFailuresForUser(user.getId(), since);
         if (failures >= properties.getMaxFailedAttempts()) {
             user.setAccountLocked(true);
             user.setLockExpiry(LocalDateTime.now().plusMinutes(properties.getLockoutMinutes()));

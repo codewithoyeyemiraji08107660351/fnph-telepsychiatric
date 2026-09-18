@@ -720,11 +720,11 @@ public class BookingService {
     }
 
     public record AssignmentRequest(
-            com.fnph.telepsychiatric.user.Users doctor,
-            com.fnph.telepsychiatric.user.Users nurse,
-            com.fnph.telepsychiatric.user.Users pharmacist,
-            com.fnph.telepsychiatric.user.Users laboratoryTechnician,
-            com.fnph.telepsychiatric.user.Users himOfficer,
+            Users doctor,
+            Users nurse,
+            Users pharmacist,
+            Users laboratoryTechnician,
+            Users himOfficer,
             Room room,
             String notes) {
     }

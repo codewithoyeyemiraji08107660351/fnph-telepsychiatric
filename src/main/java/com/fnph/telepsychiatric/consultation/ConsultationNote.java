@@ -33,7 +33,7 @@ public class ConsultationNote extends BaseEntity {
     private Long supersedesId;
 
     @Column(name = "superseded_at")
-    private java.time.LocalDateTime supersededAt;
+    private LocalDateTime supersededAt;
 
     @Column(name = "amendment_reason", length = 500)
     private String amendmentReason;

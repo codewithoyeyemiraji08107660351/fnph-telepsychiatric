@@ -19,6 +19,17 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     long countRecentFailuresForUsername(@Param("username") String username,
                                         @Param("since") LocalDateTime since);
 
+    /** Count all aliases used for the same account, including email sign-in. */
+    @Query("""
+           select count(a) from LoginAttempt a
+           where a.user.id = :userId
+             and a.attemptedAt > :since
+             and a.outcome in (com.fnph.telepsychiatric.session.LoginOutcome.BAD_CREDENTIALS,
+                               com.fnph.telepsychiatric.session.LoginOutcome.MFA_FAILED)
+           """)
+    long countRecentFailuresForUser(@Param("userId") Long userId,
+                                    @Param("since") LocalDateTime since);
+
     /**
      * Failures from one address across all usernames, for rate limiting.
      *

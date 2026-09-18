@@ -32,7 +32,9 @@ public class UserDetailServiceImpl implements UserDetailsService {
     private final UserRoleRepository userRoleRepository;
 
     @Override
-    @Transactional(readOnly = true)
+    // A missing role is an expected authentication rejection when called from
+    // sign-in; it must not mark the enclosing audit transaction rollback-only.
+    @Transactional(readOnly = true, noRollbackFor = UsernameNotFoundException.class)
     public UserDetails loadUserByUsername(String identifier) throws UsernameNotFoundException {
         Users user = userRepository.findByUsernameIgnoreCase(identifier)
                 .or(() -> userRepository.findByEmailIgnoreCase(identifier))
@@ -41,7 +43,9 @@ public class UserDetailServiceImpl implements UserDetailsService {
                 // which EHR numbers hold accounts.
                 .orElseThrow(() -> new UsernameNotFoundException("Invalid credentials"));
 
-        List<UserRole> assignments = userRoleRepository.findAllByUserId(user.getId());
+        List<UserRole> assignments = userRoleRepository.findAllByUserId(user.getId()).stream()
+                .filter(a -> Boolean.TRUE.equals(a.getRole().getIsActive()))
+                .toList();
         if (assignments.isEmpty()) {
             // An account with no role can authenticate but do nothing, which is
             // confusing to diagnose. Refuse it at the door.

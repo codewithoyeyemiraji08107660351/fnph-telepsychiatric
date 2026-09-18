@@ -45,7 +45,7 @@ public interface UserRepository extends JpaRepository<Users, Long> {
      * used for assignment and support. Reading a patient goes through
      * patient.read, which is audited by patient.
      */
-    @org.springframework.data.jpa.repository.Query("""
+    @Query("""
            select u from Users u
            where u.patient is null
              and (:term is null
@@ -55,9 +55,9 @@ public interface UserRepository extends JpaRepository<Users, Long> {
              and (:status is null or u.status = :status)
            order by u.username asc
            """)
-    java.util.List<Users> searchStaff(
-            @org.springframework.data.repository.query.Param("term") String term,
-            @org.springframework.data.repository.query.Param("status") UserStatus status,
+    List<Users> searchStaff(
+            @Param("term") String term,
+            @Param("status") UserStatus status,
             org.springframework.data.domain.Pageable pageable);
 
     Optional<Users> findByEmail(@Email @Size(max = 100) String email);
