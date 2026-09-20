@@ -112,7 +112,7 @@ public class RemitaClient {
         body.put("amount", amountInKobo);
 
         log.info(
-                "Creating Remita Connect Gateway payment: reference={}, amountNGN={}, amountKobo={}",
+                "Creating Remita Connect Gateway payment: reference={}, amountNGN={}, phone={}, amountKobo={}",
                 paymentIdentifier,
                 amount,
                 remitaPhone,
