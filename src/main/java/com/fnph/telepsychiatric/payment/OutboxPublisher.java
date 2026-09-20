@@ -19,15 +19,15 @@ import java.util.List;
  *
  * <h2>Why this exists at all</h2>
  *
- * Marking a payment verified and confirming the booking have to both happen or
- * neither. Calling the booking service directly from the payment service would
- * put both in one transaction, which sounds fine until the booking side throws
- * and rolls back a payment the provider has already taken. The patient is then
- * charged with no record of it.
+ * Provider verification records the payment independently from booking. The
+ * current patient journey then selects a slot and links the payment, intake and
+ * appointment in one transaction. This publisher remains for older hold-first
+ * clients and for deployments that still verify a payment against an existing
+ * held appointment.
  *
- * So the payment writes an intent in its own transaction, and this reads the
- * intent afterwards. The cost is a short delay. The alternative is a patient
- * who paid and cannot book, which they cannot resolve themselves.
+ * A verification with no held appointment is expected: the successful unused
+ * payment unlocks the calendar and is consumed when the patient submits a
+ * selected time.
  *
  * <h2>Retries are safe</h2>
  *
@@ -106,9 +106,8 @@ public class OutboxPublisher {
                 .orElse(null);
 
         if (appointment == null) {
-            // Paid with nothing held. Legitimate: the hold lapsed while the
-            // patient was on the payment page. The money is on their wallet and
-            // covers the next booking, so this is not an error.
+            // Expected in the payment-first patient flow. The verified unused
+            // payment unlocks slot selection and is linked during submission.
             log.info("Payment {} verified with no held appointment. The balance covers "
                     + "the patient's next booking.", payment.getReference());
             return;

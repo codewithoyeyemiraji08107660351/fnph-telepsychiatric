@@ -7,6 +7,7 @@ import com.fnph.telepsychiatric.clinical.VitalsService;
 import com.fnph.telepsychiatric.consultation.ConsultationService;
 import com.fnph.telepsychiatric.consultation.video.DailyVideoProvider;
 import com.fnph.telepsychiatric.document.IssuedDocumentService;
+import com.fnph.telepsychiatric.ehr.EhrVerificationService;
 import com.fnph.telepsychiatric.payment.PaymentService;
 import com.fnph.telepsychiatric.scheduling.BookingService;
 import com.fnph.telepsychiatric.scheduling.ScheduleService;
@@ -216,7 +217,6 @@ public class GlobalExceptionHandler {
             VitalsService.VitalsException.class,
             ConsultationService.ConsultationException.class,
             IssuedDocumentService.DocumentException.class,
-            PaymentService.PaymentException.class,
             TriageService.TriageException.class,
             UploadService.UploadException.class,
             CentreBookingService.CentreBookingException.class,
@@ -252,6 +252,45 @@ public class GlobalExceptionHandler {
                 .timestamp(LocalDateTime.now()).status(503).error("Service unavailable")
                 .message("This service is temporarily unavailable. Please try again.")
                 .path(request.getRequestURI()).build());
+    }
+
+    @ExceptionHandler(EhrVerificationService.EnrolmentException.class)
+    public ResponseEntity<ErrorResponse> handleEnrolment(
+            EhrVerificationService.EnrolmentException ex, HttpServletRequest request) {
+        HttpStatus status = ex.getMessage() != null && ex.getMessage().startsWith("Too many attempts")
+                ? HttpStatus.TOO_MANY_REQUESTS : HttpStatus.BAD_REQUEST;
+        return ResponseEntity.status(status).body(ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(status.value())
+                .error(status.getReasonPhrase())
+                .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .build());
+    }
+
+    @ExceptionHandler(PaymentService.PaymentException.class)
+    public ResponseEntity<ErrorResponse> handlePaymentException(
+            PaymentService.PaymentException ex,
+            HttpServletRequest request
+    ) {
+        log.warn(
+                "Payment request failed: {}",
+                ex.getMessage()
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(
+                        ErrorResponse.builder()
+                                .timestamp(LocalDateTime.now())
+                                .status(
+                                        HttpStatus.BAD_REQUEST.value()
+                                )
+                                .error("Payment Failed")
+                                .message(ex.getMessage())
+                                .path(request.getRequestURI())
+                                .build()
+                );
     }
 
     private String getPath() {

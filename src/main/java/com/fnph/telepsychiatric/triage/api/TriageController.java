@@ -149,6 +149,7 @@ public class TriageController {
                     row.put("version", r.getTriageVersion());
                     row.put("outcome", r.getOutcome());
                     row.put("stopReason", r.getStopReason());
+                    row.put("escalation", r.getEscalationShown());
                     row.put("submittedAt", r.getSubmittedAt());
                     return row;
                 }).toList());

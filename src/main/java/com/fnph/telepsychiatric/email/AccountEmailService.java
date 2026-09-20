@@ -2,6 +2,7 @@ package com.fnph.telepsychiatric.email;
 
 import com.fnph.telepsychiatric.user.Users;
 import jakarta.mail.internet.MimeMessage;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,6 +14,7 @@ import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
 
 import java.nio.charset.StandardCharsets;
+import java.net.URI;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
@@ -59,8 +61,36 @@ public class AccountEmailService {
     @Value("${application.portal-url:${application.base-url}}")
     private String baseUrl;
 
+    @Value("${application.base-url}")
+    private String apiBaseUrl;
+
     @Value("${application.clinical.clinical-emergency-number}")
     private String emergencyNumber;
+
+    @PostConstruct
+    void validatePublicUrls() {
+        baseUrl = requireHttpOrigin(baseUrl, "APP_PORTAL_URL");
+        requireHttpOrigin(apiBaseUrl, "APP_BASE_URL");
+    }
+
+    static String requireHttpOrigin(String value, String setting) {
+        try {
+            URI uri = URI.create(value);
+            String scheme = uri.getScheme();
+            String path = uri.getRawPath();
+            if (("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                    && uri.getHost() != null && uri.getUserInfo() == null
+                    && uri.getRawQuery() == null && uri.getRawFragment() == null
+                    && (path == null || path.isEmpty() || "/".equals(path))) {
+                return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+            }
+        } catch (IllegalArgumentException | NullPointerException ignored) {
+            // Give the operator the setting name, never a malformed URL that
+            // might itself contain an embedded credential or invitation token.
+        }
+        throw new IllegalStateException(setting
+                + " must be one valid http(s) origin, for example https://app.fnphkaduna.cloud");
+    }
 
     /**
      * Sent when an administrator creates a staff or centre account.

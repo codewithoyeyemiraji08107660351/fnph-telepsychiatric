@@ -30,9 +30,9 @@ import java.util.List;
  * The booking sequence, as confirmed by FNPH.
  *
  * <pre>
- *   1. Patient chooses a slot   -> slot HELD, appointment SLOT_HELD
- *   2. Patient pays             -> Remita, verified server-side
- *   3. Payment confirmed        -> wallet credited, slot BOOKED,
+ *   1. Patient pays             -> Remita, verified server-side
+ *   2. Patient chooses a slot   -> slot locked and appointment created
+ *   3. Request submitted        -> payment linked, slot BOOKED,
  *                                  appointment AWAITING_APPROVAL,
  *                                  Hub Coordinator dashboard notified
  *   4. Coordinator approves     -> doctor, nurse, room, pharmacy, laboratory
@@ -41,15 +41,10 @@ import java.util.List;
  *      or rejects               -> slot released, wallet balance kept
  * </pre>
  *
- * <h2>This inverts the order in the prototype document</h2>
- *
- * The PDF has payment at step 5 and slot selection at step 6. FNPH confirmed
- * the reverse, and it is the better order: a patient can see the time they are
- * buying, and nobody pays for something that turns out to be unavailable.
- *
- * It creates exactly one problem, and {@link SlotHold} is the answer. An unpaid
- * request would otherwise sit on a slot forever, and the schedule would show as
- * full while nobody was booked.
+ * {@code SLOT_HELD} is an internal, short-lived state. The patient journey
+ * creates it and confirms it with an already verified payment inside the same
+ * database transaction, so the payment, intake and appointment cannot drift
+ * apart. It remains public for older clients that used the hold-first flow.
  *
  * <h2>Payment credits the wallet; approval spends it</h2>
  *

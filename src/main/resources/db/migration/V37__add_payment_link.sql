@@ -1,0 +1,2 @@
+ALTER TABLE payments
+ADD COLUMN payment_link VARCHAR(1000) NULL;

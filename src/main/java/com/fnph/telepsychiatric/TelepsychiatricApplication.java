@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric;
 
+import jakarta.annotation.PostConstruct;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
@@ -18,4 +19,5 @@ public class TelepsychiatricApplication {
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
         SpringApplication.run(TelepsychiatricApplication.class, args);
 	}
+
 }

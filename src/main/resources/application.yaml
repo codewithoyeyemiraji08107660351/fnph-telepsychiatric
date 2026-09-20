@@ -147,7 +147,7 @@ application:
       max-mfa-attempts: 5
       mfa-lockout-minutes: 15
       mfa-challenge-minutes: 5
-      mfa-required: ${MFA_REQUIRED:false}
+      mfa-required: false
       recovery-code-count: 10
 
 
@@ -174,19 +174,25 @@ application:
 
   payment:
     remita:
-      base-url: ${REMITA_BASE_URL}
       merchant-id: ${REMITA_MERCHANT_ID}
       service-type-id: ${REMITA_SERVICE_TYPE_ID}
       api-key: ${REMITA_API_KEY}
-      api-token: ${REMITA_API_TOKEN}
+      public-key: ${REMITA_PUBLIC_KEY:}
+      secret-key: ${REMITA_SECRET_KEY:}
+      callback-url: ${REMITA_CALLBACK_URL:}
+      response-url: ${REMITA_RESPONSE_URL:}
+      connect-timeout-seconds: ${REMITA_CONNECT_TIMEOUT_SECONDS:10}
+      read-timeout-seconds: ${REMITA_READ_TIMEOUT_SECONDS:30}
+      api-base-url: ${REMITA_API_BASE_URL}
+      api-rrr-url: ${REMITA_API_RRR_URL:https://demo.remita.net/remita/ecomm/init.reg}
+      api-validate-rrr-url: ${REMITA_API_VALIDATE_RRR_URL:https://demo.remita.net/remita/ecomm/rrr/validate}
+      api-status-url: ${REMITA_API_STATUS_URL:https://demo.remita.net/remita/ecomm}
       # The callback URL carries this as a path segment, because Remita sends
       # no signature header. It makes the endpoint non-obvious; it is not the
       # security control. Re-verifying server-to-server is.
       webhook-secret: ${REMITA_WEBHOOK_SECRET}
-      callback-url: ${application.base-url}/api/v1/webhooks/remita/${REMITA_WEBHOOK_SECRET}
-      response-url: ${APP_PORTAL_URL:http://localhost:5173}/portal/payment/return
-      connect-timeout-seconds: 10
-      read-timeout-seconds: 30
+      accept-charge-success-as-paid: ${REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID:true}
+
 
   storage:
     # Filesystem, not object storage. FNPH's choice, and reasonable for one

@@ -37,7 +37,7 @@ import java.util.List;
  * it would happen before the person had agreed to anything.
  *
  * So this service refuses the PATIENT role outright. The patient pathway is
- * EHR verification followed by contact verification, which the patient starts.
+ * EHR verification followed by password creation, which the patient starts.
  *
  * **No password is ever generated or emailed.** The invitation carries a
  * single-use link and the recipient chooses their own password. A generated
@@ -57,7 +57,6 @@ public class StaffInvitationService {
     private final AccountEmailService emailService;
     private final AuthenticationService authenticationService;
     private final SessionService sessionService;
-    private final MfaService mfaService;
     private final PasswordEncoder passwordEncoder;
     private final AuthProperties authProperties;
     private final AccountTokenRepository accountTokenRepository;
@@ -129,7 +128,7 @@ public class StaffInvitationService {
         user.setStatus(UserStatus.INVITED);
         user.setIsActive(false);
         user.setMustChangePassword(false);
-        user.setMfaEnabled(mfaService.isRequiredFor(role.getScope()));
+        user.setMfaEnabled(false);
         user.setInvitedAt(now);
         user.setInvitedBy(actor);
         userRepository.save(user);

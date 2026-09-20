@@ -7,17 +7,17 @@ import java.time.LocalDateTime;
 
 @Schema(name = "EnrolmentLookup",
         description = """
-                Your record was matched and a verification code has been sent.
-
-                Details are **masked**. The full date of birth and phone number are never \
-                returned, and the code goes to the number the hospital holds rather than \
-                to one you supply.
+                The existing hospital record was matched. Use the short-lived setup
+                reference to choose a password in step two.
                 """)
 public record EnrolmentLookupResponse(
 
-        @Schema(description = "Pass this back with the code to finish enrolling.",
+        @Schema(description = "Pass this back with the chosen password to finish enrolling.",
                 example = "01M1X5FF5ZR2M84M6088QR0FGE")
         String verificationPublicId,
+
+        @Schema(description = "The matched hospital EHR number.", example = "204815")
+        String ehrNumber,
 
         @Schema(description = "The name on your hospital record. Check it is you.",
                 example = "Ngozi Okonkwo")
@@ -26,15 +26,12 @@ public record EnrolmentLookupResponse(
         @Schema(description = "Masked date of birth, year only.", example = "**/**/1988")
         String dateOfBirthMasked,
 
-        @Schema(description = "Where the code was sent.", example = "*******5678")
-        String phoneMasked,
-
         @Schema(description = "The clinic on your record.", example = "Adult Outpatient",
                 nullable = true)
         String clinic,
 
-        @Schema(description = "When the code expires (UTC).")
-        LocalDateTime codeExpiresAt,
+        @Schema(description = "When this setup reference expires (UTC).")
+        LocalDateTime setupExpiresAt,
 
         @Schema(description = """
                 The date the hospital extracted the record list this was matched against.

@@ -14,6 +14,8 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.apache.commons.lang3.StringUtils.firstNonBlank;
+
 @Entity
 @Table(name = "patients", uniqueConstraints = {
         @UniqueConstraint(name = "uk_patients_ehr_number", columnNames = "ehr_number")
@@ -102,4 +104,5 @@ public class Patient extends SoftDeletableEntity {
 
     @Column(name = "drift_details", columnDefinition = "TEXT")
     private String driftDetails;
+
 }

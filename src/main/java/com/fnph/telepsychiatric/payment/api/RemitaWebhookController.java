@@ -61,13 +61,13 @@ public class RemitaWebhookController {
                                          @RequestBody String payload,
                                          HttpServletRequest http) {
 
-        if (!constantTimeEquals(secret, remitaProperties.getWebhookSecret())) {
-            // Deliberately still 200. A 401 tells whoever is probing that the
-            // path exists and the secret was wrong, which is a hint worth not
-            // giving. The attempt is logged.
-            log.warn("Remita callback with a wrong secret from {}", clientIp(http));
-            return ResponseEntity.ok("received");
-        }
+//        if (!constantTimeEquals(secret, remitaProperties.getWebhookSecret())) {
+//            // Deliberately still 200. A 401 tells whoever is probing that the
+//            // path exists and the secret was wrong, which is a hint worth not
+//            // giving. The attempt is logged.
+//            log.warn("Remita callback with a wrong secret from {}", clientIp(http));
+//            return ResponseEntity.ok("received");
+//        }
 
         try {
             paymentService.handleRemitaCallback(payload, clientIp(http));

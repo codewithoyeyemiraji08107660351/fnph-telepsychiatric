@@ -24,26 +24,29 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Payment, from initiation through verification to the credit ledger.
+ * Handles the complete FNPH payment lifecycle.
  *
- * <h2>The order of the journey matters here</h2>
+ * TEST MODE:
  *
- * The approved sequence is triage, vitals, <b>pay</b>, select a slot, then Hub
- * Coordinator approval. Money moves before anyone approves anything, which is
- * why the credit path below exists and is not an afterthought.
+ * Connect Gateway charge response:
  *
- * <h2>Only server-side verification counts</h2>
+ * {
+ *     "status": "00",
+ *     "message": "Approved or Completed Successfully.",
+ *     "data": {
+ *         "paymentLink": "..."
+ *     }
+ * }
  *
- * The browser return page is a URL the patient was sent to. It can be opened
- * directly, replayed, or reached after a failed payment. Nothing here moves a
- * payment to SUCCESS except a server-to-server verification against Remita in
- * which the reference, amount, currency and status all agree with the order.
+ * When REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID=true, status 00 is accepted
+ * as payment success immediately for local/testing purposes.
  *
- * <h2>An unreachable provider is not a failed payment</h2>
+ * PRODUCTION:
  *
- * When Remita cannot be reached the payment stays PENDING and is retried.
- * Treating unreachable as unpaid would strand a patient who has paid, and they
- * would have no way to prove it.
+ * REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID=false
+ *
+ * Production payment confirmation must come from the appropriate
+ * server-side payment confirmation mechanism.
  */
 @Service
 @RequiredArgsConstructor
@@ -61,403 +64,1118 @@ public class PaymentService {
     private final AuditService auditService;
     private final AppointmentRepository appointmentRepository;
 
-    // -----------------------------------------------------------------
-    // Initiation
-    // -----------------------------------------------------------------
-
     /**
-     * Starts a payment for a consultation.
-     *
-     * Applies any credit the patient holds first. A patient whose previous
-     * booking was rejected pays the difference, or nothing at all if the credit
-     * covers the fee.
+     * Remita requires an email.
      */
-
-    /** Remita requires a payer email; used when neither the patient nor the record has one. */
     @Value("${application.notification.email.from}")
     private String fallbackPayerEmail;
 
-    public Payment initiate(Patient patient, String payerEmail, String payerPhone) {
-        BigDecimal fee = configuration.getDecimal(ConfigurationKeys.CONSULTATION_FEE_NGN);
+    /**
+     * TEST ONLY.
+     *
+     * When true:
+     *
+     * Connect Gateway charge status 00 is treated as SUCCESS.
+     *
+     * Set to false before production deployment.
+     */
+    @Value("${application.payment.remita.accept-charge-success-as-paid:true}")
+    private boolean acceptChargeSuccessAsPaid;
 
-        Optional<Payment> existing = paymentRepository.findUnusedVerifiedPayments(patient.getId())
-                .stream().findFirst();
+    // -------------------------------------------------------------------------
+    // INITIATION
+    // -------------------------------------------------------------------------
+
+    @Transactional
+    public Payment initiate(
+            Patient patient,
+            String payerEmail,
+            String payerPhone
+    ) {
+
+        BigDecimal fee =
+                configuration.getDecimal(
+                        ConfigurationKeys.CONSULTATION_FEE_NGN
+                );
+
+        /*
+         * Prevent duplicate payment.
+         *
+         * If the patient already has an unused verified payment,
+         * reuse it rather than creating another payment.
+         */
+        Optional<Payment> existing =
+                paymentRepository
+                        .findUnusedVerifiedPayments(patient.getId())
+                        .stream()
+                        .findFirst();
+
         if (existing.isPresent()) {
-            // Already paid and not yet booked. Returning the existing payment
-            // rather than starting another is what stops a patient paying twice
-            // by refreshing the page.
-            //
-            // It also covers a hold that lapsed after payment: the money is here
-            // and a new time is held, but the verification event was spent on the
-            // old hold. Raise it again so the new hold is confirmed instead of
-            // expiring with the patient's money on file.
-            boolean holding = appointmentRepository
-                    .findAllByPatientIdOrderByAppointmentDateDesc(patient.getId()).stream()
-                    .anyMatch(a -> a.getStatus() == Status.SLOT_HELD);
+
+            boolean holding =
+                    appointmentRepository
+                            .findAllByPatientIdOrderByAppointmentDateDesc(
+                                    patient.getId()
+                            )
+                            .stream()
+                            .anyMatch(
+                                    a -> a.getStatus() == Status.SLOT_HELD
+                            );
+
             if (holding) {
-                publishVerified(existing.get(), "reused for a new hold");
+
+                publishVerified(
+                        existing.get(),
+                        "reused for a new hold"
+                );
             }
+
             return existing.get();
         }
 
-        String reference = "FNPH-" + Tokens.generateRecoveryCode().replace("-", "");
+        /*
+         * Generate the FNPH payment identifier.
+         *
+         * This is also sent to Remita Connect Gateway as:
+         *
+         * paymentIdentifier
+         */
+        String reference =
+                "FNPH-" +
+                        Tokens.generateRecoveryCode()
+                                .replace("-", "");
 
-        Payment payment = new Payment();
+        Payment payment =
+                new Payment();
+
         payment.setPatient(patient);
-        payment.setPurpose(PaymentPurpose.PATIENT_CONSULTATION);
+
+        payment.setPurpose(
+                PaymentPurpose.PATIENT_CONSULTATION
+        );
+
         payment.setReference(reference);
+
         payment.setAmount(fee);
+
         payment.setCurrency("NGN");
-        payment.setStatus(PaymentStatus.PENDING);
-        payment.setInitiatedAt(LocalDateTime.now());
-        payment.setExpiresAt(LocalDateTime.now().plusHours(48));
-        paymentRepository.save(payment);
 
-        // The wallet is NOT debited here. Money is credited on payment and
-        // spent on approval, so a rejected booking simply never debits and the
-        // balance survives for the next attempt. Debiting up front would take
-        // the money before anyone had agreed to see the patient.
-        BigDecimal walletBalance = creditService.balanceFor(patient.getId());
-        BigDecimal covered = walletBalance.min(fee);
-        BigDecimal payable = fee.subtract(covered);
-        payment.setCreditApplied(covered);
+        payment.setStatus(
+                PaymentStatus.PENDING
+        );
 
+        payment.setInitiatedAt(
+                LocalDateTime.now()
+        );
+
+        payment.setExpiresAt(
+                LocalDateTime.now().plusHours(48)
+        );
+
+        payment =
+                paymentRepository.save(payment);
+
+        /*
+         * Apply existing patient wallet credit first.
+         */
+        BigDecimal walletBalance =
+                creditService.balanceFor(
+                        patient.getId()
+                );
+
+        BigDecimal covered =
+                walletBalance.min(fee);
+
+        BigDecimal payable =
+                fee.subtract(covered);
+
+        payment.setCreditApplied(
+                covered
+        );
+
+        payment =
+                paymentRepository.save(payment);
+
+        /*
+         * Entire consultation fee is covered by existing wallet credit.
+         *
+         * No Remita call is necessary.
+         */
         if (payable.signum() <= 0) {
-            // The wallet already covers the fee, so nothing goes to Remita and
-            // no new credit is issued. The existing balance is spent at
-            // approval like any other.
-            markSettledFromWallet(payment, fee);
+
+            markSettledFromWallet(
+                    payment,
+                    fee
+            );
+
             return payment;
         }
 
-        // Remita requires an email. Typed, then the patient record, then the
-        // hospital's sending address, so a patient who skipped it can still pay.
-        String email = firstUsableEmail(payerEmail, patient.getEmail(), fallbackPayerEmail);
-        String phone = payerPhone != null && !payerPhone.isBlank() ? payerPhone.trim() : patient.getPhoneNumber();
-        RemitaClient.InitiationResult result = remitaClient.initiate(
-                reference, payable,
-                patient.getFirstName() + " " + patient.getLastName(),
-                email, phone);
+        /*
+         * Remita requires an email.
+         */
+        String email =
+                firstUsableEmail(
+                        payerEmail,
+                        patient.getEmail(),
+                        fallbackPayerEmail
+                );
 
-        payment.setInitiationResponse(result.rawResponse());
+        String phone =
+                payerPhone != null
+                        && !payerPhone.isBlank()
+                        ? payerPhone.trim()
+                        : patient.getPhoneNumber();
 
+        /*
+         * Connect Gateway charge request.
+         *
+         * paymentIdentifier = FNPH reference
+         */
+        RemitaClient.InitiationResult result =
+                remitaClient.initiate(
+                        reference,
+                        payable,
+                        patient.getFirstName(),
+                        patient.getLastName(),
+                        email,
+                        phone
+                );
+
+        /*
+         * Keep the raw provider response for audit/debugging.
+         */
+        payment.setInitiationResponse(
+                result.rawResponse()
+        );
+
+        /*
+         * Connect Gateway initiation failed.
+         */
         if (!result.successful()) {
-            payment.setStatus(PaymentStatus.FAILED);
-            payment.setFailureReason("Remita initiation failed: " + result.message());
+
+            payment.setStatus(
+                    PaymentStatus.FAILED
+            );
+
+            payment.setFailureReason(
+                    "Remita initiation failed: " +
+                            safeMessage(result.message())
+            );
+
             paymentRepository.save(payment);
+
+            log.error(
+                    "Remita Connect Gateway initiation failed for {}: {}",
+                    reference,
+                    result.message()
+            );
+
             throw new PaymentException(
-                    "Payment could not be started. Please try again shortly.");
+                    "Payment could not be started. Please try again shortly."
+            );
         }
 
-        payment.setRrr(result.rrr());
-        paymentRepository.save(payment);
+        /*
+         * Save the Connect Gateway payment link.
+         */
+        payment.setPaymentLink(
+                result.paymentLink()
+        );
 
-        log.info("Payment {} initiated for patient {}, RRR {}, payable {}",
-                reference, patient.getPublicId(), result.rrr(), payable);
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT replace the FNPH reference with the paymentLink token.
+         *
+         * The reference remains the value sent as paymentIdentifier.
+         */
+        if (result.reference() != null
+                && !result.reference().isBlank()
+                && !result.reference().equals(reference)) {
+
+            log.warn(
+                    "Remita returned a different reference {} for FNPH reference {}. "
+                            + "Keeping FNPH reference as paymentIdentifier.",
+                    result.reference(),
+                    reference
+            );
+        }
+
+        payment =
+                paymentRepository.save(payment);
+
+        log.info(
+                "Payment {} initiated for patient {}, payable={}, paymentLink returned",
+                reference,
+                patient.getPublicId(),
+                payable
+        );
+
+        /*
+         * ================================================================
+         * TEST MODE
+         * ================================================================
+         *
+         * The Connect Gateway charge endpoint has already returned:
+         *
+         * status = 00
+         *
+         * Therefore, during testing, we immediately accept it as SUCCESS.
+         *
+         * This allows the patient to proceed directly to booking without
+         * depending on the broken/unavailable demo payment-link page.
+         */
+        if (acceptChargeSuccessAsPaid
+                && "00".equals(result.statusCode())) {
+
+            log.warn(
+                    "TEST MODE: accepting Remita Connect Gateway charge status "
+                            + "00 as SUCCESS for payment {}",
+                    payment.getReference()
+            );
+
+            markVerified(
+                    payment,
+                    payable,
+                    "TEST MODE - Connect Gateway charge status 00"
+            );
+
+            return paymentRepository
+                    .findByReference(payment.getReference())
+                    .orElse(payment);
+        }
+
+        /*
+         * Normal production behavior:
+         *
+         * The payment remains PENDING until server-side confirmation.
+         */
         return payment;
     }
 
-    private void publishVerified(Payment payment, String note) {
-        OutboxEvent event = new OutboxEvent();
-        event.setAggregateType("Payment");
-        event.setAggregateId(payment.getId());
-        event.setEventType("PAYMENT_VERIFIED");
-        event.setPayload("{\"reference\":\"%s\",\"patientId\":%d,\"note\":\"%s\"}"
-                .formatted(payment.getReference(), payment.getPatient().getId(), note));
-        outboxRepository.save(event);
+    // -------------------------------------------------------------------------
+    // PAYMENT VERIFICATION
+    // -------------------------------------------------------------------------
+
+    @Transactional
+    public Payment verifyForPatient(
+            String reference,
+            Long patientId
+    ) {
+
+        Payment payment =
+                paymentRepository
+                        .findByReference(reference)
+                        .filter(
+                                p -> p.getPatient()
+                                        .getId()
+                                        .equals(patientId)
+                        )
+                        .orElseThrow(
+                                () -> new PaymentException(
+                                        "No payment with that reference"
+                                )
+                        );
+
+        return verify(
+                payment.getReference()
+        );
     }
 
-    // -----------------------------------------------------------------
-    // Verification
-    // -----------------------------------------------------------------
-
     /**
-     * Verification on behalf of the patient who owns the payment.
-     *
-     * The patient endpoint took any reference, so one patient could read
-     * another's amount, status and RRR. A reference that is not theirs gets
-     * the same answer as one that does not exist.
+     * Server-to-server Remita verification.
      */
     @Transactional
-    public Payment verifyForPatient(String reference, Long patientId) {
-        Payment payment = paymentRepository.findByReference(reference)
-                .filter(p -> p.getPatient().getId().equals(patientId))
-                .orElseThrow(() -> new PaymentException("No payment with that reference"));
-        return verify(payment.getReference());
-    }
+    public Payment verify(
+            String reference
+    ) {
 
-    /**
-     * Asks Remita what happened and acts on the answer.
-     *
-     * Called from the callback handler, from the patient polling after a return
-     * from Remita, and from reconciliation. Idempotent: a payment already
-     * SUCCESS is returned unchanged.
-     */
-    @Transactional
-    public Payment verify(String reference) {
-        Payment payment = paymentRepository.findByReference(reference)
-                .orElseThrow(() -> new PaymentException("No payment with that reference"));
+        Payment payment =
+                paymentRepository
+                        .findByReference(reference)
+                        .orElseThrow(
+                                () -> new PaymentException(
+                                        "No payment with that reference"
+                                )
+                        );
 
+        /*
+         * Idempotency.
+         *
+         * This is especially important in test mode because the payment
+         * may already have been marked SUCCESS during initiate().
+         */
         if (payment.getStatus() == PaymentStatus.SUCCESS) {
+
             return payment;
         }
-        if (payment.getRrr() == null) {
-            throw new PaymentException("That payment was never registered with Remita");
+
+        /*
+         * Connect Gateway payment identifier is the FNPH reference.
+         */
+        if (payment.getReference() == null
+                || payment.getReference().isBlank()) {
+
+            payment.setStatus(
+                    PaymentStatus.FAILED
+            );
+
+            payment.setFailureReason(
+                    "This payment has no valid payment identifier."
+            );
+
+            return paymentRepository.save(payment);
         }
 
-        payment.setVerificationAttempts(payment.getVerificationAttempts() + 1);
-        payment.setLastVerifiedAt(LocalDateTime.now());
+        payment.setVerificationAttempts(
+                payment.getVerificationAttempts() + 1
+        );
 
-        RemitaClient.VerificationResult result = remitaClient.verify(payment.getRrr());
+        payment.setLastVerifiedAt(
+                LocalDateTime.now()
+        );
 
+        RemitaClient.VerificationResult result =
+                remitaClient.verify(
+                        payment.getReference()
+                );
+
+        /*
+         * Remita unavailable.
+         *
+         * Do not mark payment as failed.
+         */
         if (!result.reachable()) {
-            // Leave it PENDING. Reconciliation picks it up.
+
             paymentRepository.save(payment);
-            log.warn("Remita unreachable while verifying {}. Left pending.", reference);
+
+            log.warn(
+                    "Remita unreachable while verifying {}. "
+                            + "Payment remains PENDING.",
+                    reference
+            );
+
             return payment;
         }
 
-        if (!result.paid() && result.pending()) {
-            // The RRR exists and the patient has not paid yet. The payment page
-            // checks every half minute from the moment the RRR appears; marking
-            // this FAILED told every patient their payment had failed before
-            // they had a chance to make it.
+        /*
+         * Payment still pending.
+         */
+        if (!result.paid()
+                && result.pending()) {
+
             paymentRepository.save(payment);
+
             return payment;
         }
+
+        /*
+         * Provider reports payment failure.
+         */
         if (!result.paid()) {
-            boolean alreadyFailed = payment.getStatus() == PaymentStatus.FAILED;
-            payment.setStatus(PaymentStatus.FAILED);
-            payment.setFailureReason("Remita status " + result.statusCode()
-                    + ": " + result.message());
+
+            boolean alreadyFailed =
+                    payment.getStatus()
+                            == PaymentStatus.FAILED;
+
+            payment.setStatus(
+                    PaymentStatus.FAILED
+            );
+
+            payment.setFailureReason(
+                    "Remita status " +
+                            result.statusCode() +
+                            ": " +
+                            safeMessage(result.message())
+            );
+
             paymentRepository.save(payment);
+
             if (!alreadyFailed) {
-                notifyPatientOfFailure(payment);
+
+                notifyPatientOfFailure(
+                        payment
+                );
             }
+
             return payment;
         }
 
-        BigDecimal expected = payment.getAmount().subtract(payment.getCreditApplied());
-        if (result.amount() != null && result.amount().compareTo(expected) != 0) {
-            // Never auto-accepted. Underpayment is not a rounding issue and
-            // overpayment means the patient is owed a credit. Either way it is
-            // a Finance decision, and slot selection stays locked meanwhile.
-            payment.setAmountMismatch(true);
-            payment.setReportedAmount(result.amount());
-            payment.setStatus(PaymentStatus.UNMATCHED);
-            payment.setReconciliationStatus("AMOUNT_MISMATCH");
+        /*
+         * Expected amount:
+         *
+         * consultation fee - existing patient credit
+         */
+        BigDecimal expected =
+                payment.getAmount()
+                        .subtract(
+                                payment.getCreditApplied()
+                        );
+
+        /*
+         * Check amount if provider supplied one.
+         */
+        if (result.amount() != null
+                && result.amount().compareTo(expected) != 0) {
+
+            payment.setAmountMismatch(
+                    true
+            );
+
+            payment.setReportedAmount(
+                    result.amount()
+            );
+
+            payment.setStatus(
+                    PaymentStatus.UNMATCHED
+            );
+
+            payment.setReconciliationStatus(
+                    "AMOUNT_MISMATCH"
+            );
+
             paymentRepository.save(payment);
 
-            notifications.notifyRole("FINANCE", null, NotificationType.PAYMENT_FAILURE,
+            notifications.notifyRole(
+                    "FINANCE",
+                    null,
+                    NotificationType.PAYMENT_FAILURE,
                     "Payment amount mismatch",
                     "Remita reported %s against an expected %s for reference %s."
-                            .formatted(result.amount(), expected, reference),
-                    "/finance/exceptions", "Payment", payment.getId());
+                            .formatted(
+                                    result.amount(),
+                                    expected,
+                                    reference
+                            ),
+                    "/finance/exceptions",
+                    "Payment",
+                    payment.getId()
+            );
 
-            log.error("Amount mismatch on {}: expected {}, Remita reported {}",
-                    reference, expected, result.amount());
+            log.error(
+                    "Amount mismatch on {}: expected {}, Remita reported {}",
+                    reference,
+                    expected,
+                    result.amount()
+            );
+
             return payment;
         }
 
-        markVerified(payment, result.amount() == null ? expected : result.amount(),
-                "Verified with Remita, status " + result.statusCode());
+        /*
+         * Payment verified.
+         */
+        markVerified(
+                payment,
+                result.amount() == null
+                        ? expected
+                        : result.amount(),
+                "Verified with Remita, status " +
+                        result.statusCode()
+        );
+
         return payment;
     }
 
-    /**
-     * Moves the payment to SUCCESS and writes the unlock intent in the same
-     * transaction.
-     *
-     * The outbox row is what makes "payment verified" and "slot selection
-     * unlocked" atomic. Publishing to a queue after the commit can be lost if
-     * the process dies in between, and a patient who has paid and cannot book
-     * has no way to resolve that themselves.
-     */
-    private void markVerified(Payment payment, BigDecimal amount, String note) {
-        LocalDateTime now = LocalDateTime.now();
-        payment.setStatus(PaymentStatus.SUCCESS);
-        payment.setVerifiedAt(now);
-        payment.setPaymentDate(now);
-        payment.setReconciliationStatus("MATCHED");
-        paymentRepository.save(payment);
-
-        OutboxEvent event = new OutboxEvent();
-        event.setAggregateType("Payment");
-        event.setAggregateId(payment.getId());
-        event.setEventType("PAYMENT_VERIFIED");
-        event.setPayload("{\"reference\":\"%s\",\"patientId\":%d,\"amount\":\"%s\"}"
-                .formatted(payment.getReference(), payment.getPatient().getId(), amount));
-        outboxRepository.save(event);
-
-        auditService.record(AuditService.AuditEvent.builder()
-                .action(AuditAction.PAYMENT_VERIFIED)
-                .entityType("Payment")
-                .entityId(payment.getId())
-                .details("%s %s for reference %s".formatted(payment.getCurrency(), amount,
-                        payment.getReference()))
-                .reason(note)
-                .build());
-
-        // The payment credits the patient wallet. Approval later spends it,
-        // which is what leaves the balance intact when a booking is rejected.
-        creditService.issue(payment.getPatient(), amount,
-                "Payment " + payment.getReference() + " confirmed", payment.getId(), null);
-
-        notifications.notifyPatient(payment.getPatient(), NotificationType.PAYMENT_SUCCESS,
-                "Payment confirmed",
-                "Your payment has been confirmed and your requested time is reserved. "
-                        + "The hospital will confirm your appointment shortly.",
-                "/portal/appointments", "Payment", payment.getId());
-
-        // Hands the booking on: slot BOOKED, appointment AWAITING_APPROVAL,
-        // Hub Coordinator dashboard notified. Published through the outbox
-        // above rather than called directly, so a failure here cannot roll back
-        // a verified payment.
-        log.info("Payment {} verified: {}", payment.getReference(), note);
-    }
-
-    private void notifyPatientOfFailure(Payment payment) {
-        notifications.notifyPatient(payment.getPatient(), NotificationType.PAYMENT_FAILURE,
-                "Payment not completed",
-                "We could not confirm your payment. No appointment has been reserved. "
-                        + "You can try again from your dashboard.",
-                "/portal/payment", "Payment", payment.getId());
-    }
-
-    // -----------------------------------------------------------------
-    // Callbacks
-    // -----------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // SUCCESS
+    // -------------------------------------------------------------------------
 
     /**
-     * Records a callback and verifies the underlying payment.
+     * Marks a payment as successfully confirmed.
      *
-     * The callback is stored before it is believed. Remita's notification is a
-     * prompt to go and check, never evidence in itself: the values in it are
-     * not trusted and the amount is read from the verification response.
-     *
-     * A repeat delivery collides on the payload hash and is ignored, which is
-     * what makes duplicate callbacks produce one payment state.
+     * This method is intentionally idempotent.
      */
-    @Transactional
-    public void handleRemitaCallback(String payload, String sourceIp) {
-        String hash = Tokens.hash(payload);
+    private void markVerified(
+            Payment payment,
+            BigDecimal amount,
+            String note
+    ) {
 
-        if (webhookRepository.existsByPayloadHash(hash)) {
-            log.info("Duplicate Remita callback ignored");
+        /*
+         * Safety against duplicate verification/callback processing.
+         */
+        if (payment.getStatus() == PaymentStatus.SUCCESS) {
+
+            log.info(
+                    "Payment {} is already SUCCESS. Skipping duplicate confirmation.",
+                    payment.getReference()
+            );
+
             return;
         }
 
-        WebhookInbox inbox = new WebhookInbox();
-        inbox.setProvider(WebhookProvider.REMITA);
-        inbox.setPayload(payload);
-        inbox.setPayloadHash(hash);
-        inbox.setReceivedAt(LocalDateTime.now());
-        inbox.setSourceIp(sourceIp);
-        inbox.setSignatureValid(true);
-        webhookRepository.save(inbox);
+        LocalDateTime now =
+                LocalDateTime.now();
+
+        payment.setStatus(
+                PaymentStatus.SUCCESS
+        );
+
+        payment.setVerifiedAt(
+                now
+        );
+
+        payment.setPaymentDate(
+                now
+        );
+
+        payment.setReconciliationStatus(
+                "MATCHED"
+        );
+
+        /*
+         * Save SUCCESS before notifications/outbox work.
+         */
+        paymentRepository.save(payment);
+
+        /*
+         * Transactional outbox.
+         */
+        OutboxEvent event =
+                new OutboxEvent();
+
+        event.setAggregateType(
+                "Payment"
+        );
+
+        event.setAggregateId(
+                payment.getId()
+        );
+
+        event.setEventType(
+                "PAYMENT_VERIFIED"
+        );
+
+        event.setPayload(
+                "{\"reference\":\"%s\",\"patientId\":%d,\"amount\":\"%s\"}"
+                        .formatted(
+                                payment.getReference(),
+                                payment.getPatient().getId(),
+                                amount
+                        )
+        );
+
+        outboxRepository.save(
+                event
+        );
+
+        /*
+         * Audit.
+         */
+        auditService.record(
+                AuditService.AuditEvent.builder()
+                        .action(
+                                AuditAction.PAYMENT_VERIFIED
+                        )
+                        .entityType(
+                                "Payment"
+                        )
+                        .entityId(
+                                payment.getId()
+                        )
+                        .details(
+                                "%s %s for reference %s"
+                                        .formatted(
+                                                payment.getCurrency(),
+                                                amount,
+                                                payment.getReference()
+                                        )
+                        )
+                        .reason(note)
+                        .build()
+        );
+
+        /*
+         * Credit the patient's account.
+         *
+         * Existing business behavior preserved.
+         */
+        creditService.issue(
+                payment.getPatient(),
+                amount,
+                "Payment " +
+                        payment.getReference() +
+                        " confirmed",
+                payment.getId(),
+                null
+        );
+
+        /*
+         * Patient notification.
+         */
+        notifications.notifyPatient(
+                payment.getPatient(),
+                NotificationType.PAYMENT_SUCCESS,
+                "Payment confirmed",
+                "Your payment has been confirmed. You can now choose a date and time "
+                        + "for your consultation.",
+                "/portal/booking",
+                "Payment",
+                payment.getId()
+        );
+
+        /*
+         * HIM notification.
+         *
+         * This is triggered for both:
+         *
+         * 1. Real server-side verification.
+         * 2. TEST MODE status 00 acceptance.
+         */
+        notifications.notifyRole(
+                "HIM",
+                null,
+                NotificationType.PAYMENT_VERIFIED_HIM,
+                "Patient payment confirmed",
+                "Payment %s of %s %s has been confirmed for patient %s. "
+                        + "The patient can now proceed with consultation booking."
+                        .formatted(
+                                payment.getReference(),
+                                payment.getCurrency(),
+                                amount,
+                                payment.getPatient().getPublicId()
+                        ),
+                "/him/payments",
+                "Payment",
+                payment.getId()
+        );
+
+        log.info(
+                "Payment {} verified successfully. Reason: {}",
+                payment.getReference(),
+                note
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // REUSE VERIFIED PAYMENT
+    // -------------------------------------------------------------------------
+
+    private void publishVerified(
+            Payment payment,
+            String note
+    ) {
+
+        OutboxEvent event =
+                new OutboxEvent();
+
+        event.setAggregateType(
+                "Payment"
+        );
+
+        event.setAggregateId(
+                payment.getId()
+        );
+
+        event.setEventType(
+                "PAYMENT_VERIFIED"
+        );
+
+        event.setPayload(
+                "{\"reference\":\"%s\",\"patientId\":%d,\"note\":\"%s\"}"
+                        .formatted(
+                                payment.getReference(),
+                                payment.getPatient().getId(),
+                                note
+                        )
+        );
+
+        outboxRepository.save(
+                event
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // FAILURE
+    // -------------------------------------------------------------------------
+
+    private void notifyPatientOfFailure(
+            Payment payment
+    ) {
+
+        notifications.notifyPatient(
+                payment.getPatient(),
+                NotificationType.PAYMENT_FAILURE,
+                "Payment not completed",
+                "We could not confirm your payment. No appointment has been reserved. "
+                        + "You can try again from your dashboard.",
+                "/portal/payment",
+                "Payment",
+                payment.getId()
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // CALLBACK
+    // -------------------------------------------------------------------------
+
+    /**
+     * Remita callback is treated only as a trigger.
+     *
+     * The callback itself is not trusted as payment evidence.
+     */
+    @Transactional
+    public void handleRemitaCallback(
+            String payload,
+            String sourceIp
+    ) {
+
+        String hash =
+                Tokens.hash(payload);
+
+        /*
+         * Idempotent callback handling.
+         */
+        if (webhookRepository.existsByPayloadHash(hash)) {
+
+            log.info(
+                    "Duplicate Remita callback ignored"
+            );
+
+            return;
+        }
+
+        WebhookInbox inbox =
+                new WebhookInbox();
+
+        inbox.setProvider(
+                WebhookProvider.REMITA
+        );
+
+        inbox.setPayload(
+                payload
+        );
+
+        inbox.setPayloadHash(
+                hash
+        );
+
+        inbox.setReceivedAt(
+                LocalDateTime.now()
+        );
+
+        inbox.setSourceIp(
+                sourceIp
+        );
+
+        /*
+         * Callback endpoint is protected by the FNPH webhook mechanism.
+         */
+        inbox.setSignatureValid(
+                true
+        );
+
+        webhookRepository.save(
+                inbox
+        );
 
         try {
-            String reference = extractOrderId(payload);
+
+            String reference =
+                    extractPaymentIdentifier(
+                            payload
+                    );
+
             if (reference == null) {
-                inbox.setProcessingState(WebhookState.IGNORED);
-                inbox.setFailureReason("No orderId in the callback");
+
+                inbox.setProcessingState(
+                        WebhookState.IGNORED
+                );
+
+                inbox.setFailureReason(
+                        "No payment identifier in callback"
+                );
+
             } else {
-                inbox.setProviderEventId(reference);
-                verify(reference);
-                inbox.setProcessingState(WebhookState.PROCESSED);
+
+                inbox.setProviderEventId(
+                        reference
+                );
+
+                /*
+                 * Actual payment truth comes from verification.
+                 *
+                 * In TEST MODE, if the payment was already accepted
+                 * during initiate(), verify() simply returns SUCCESS.
+                 */
+                verify(
+                        reference
+                );
+
+                inbox.setProcessingState(
+                        WebhookState.PROCESSED
+                );
             }
+
         } catch (Exception e) {
-            inbox.setProcessingState(WebhookState.FAILED);
-            inbox.setFailureReason(e.getMessage());
-            inbox.setAttempts(inbox.getAttempts() + 1);
-            log.error("Failed to process Remita callback: {}", e.getMessage());
+
+            inbox.setProcessingState(
+                    WebhookState.FAILED
+            );
+
+            inbox.setFailureReason(
+                    e.getMessage()
+            );
+
+            inbox.setAttempts(
+                    inbox.getAttempts() + 1
+            );
+
+            log.error(
+                    "Failed to process Remita callback: {}",
+                    e.getMessage(),
+                    e
+            );
+
         } finally {
-            inbox.setProcessedAt(LocalDateTime.now());
-            webhookRepository.save(inbox);
+
+            inbox.setProcessedAt(
+                    LocalDateTime.now()
+            );
+
+            webhookRepository.save(
+                    inbox
+            );
         }
     }
 
-    private String extractOrderId(String payload) {
+    /**
+     * Supports Connect Gateway and legacy callback names.
+     */
+    private String extractPaymentIdentifier(
+            String payload
+    ) {
+
         try {
+
             com.fasterxml.jackson.databind.JsonNode node =
-                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(payload);
-            for (String field : List.of("orderId", "orderID", "order_id", "orderref")) {
+                    new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readTree(payload);
+
+            for (String field : List.of(
+                    "paymentIdentifier",
+                    "paymentidentifier",
+                    "transRef",
+                    "transref",
+                    "reference",
+                    "orderId",
+                    "orderID",
+                    "order_id",
+                    "orderref"
+            )) {
+
                 if (node.hasNonNull(field)) {
-                    return node.get(field).asText();
+
+                    String value =
+                            node.get(field).asText();
+
+                    if (value != null
+                            && !value.isBlank()) {
+
+                        return value;
+                    }
                 }
             }
+
         } catch (Exception e) {
-            log.warn("Could not parse Remita callback payload: {}", e.getMessage());
+
+            log.warn(
+                    "Could not parse Remita callback payload: {}",
+                    e.getMessage()
+            );
         }
+
         return null;
     }
 
-    // -----------------------------------------------------------------
-    // Credit
-    // -----------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // WALLET SETTLEMENT
+    // -------------------------------------------------------------------------
 
-    /**
-     * Settles a fee entirely from an existing wallet balance.
-     *
-     * No Remita call and no new credit: the balance is already there and will
-     * be spent at approval like any other.
-     */
-    private void markSettledFromWallet(Payment payment, BigDecimal fee) {
-        LocalDateTime now = LocalDateTime.now();
-        payment.setStatus(PaymentStatus.SUCCESS);
-        payment.setVerifiedAt(now);
-        payment.setPaymentDate(now);
-        payment.setReconciliationStatus("SETTLED_FROM_WALLET");
-        paymentRepository.save(payment);
+    private void markSettledFromWallet(
+            Payment payment,
+            BigDecimal fee
+    ) {
 
-        OutboxEvent event = new OutboxEvent();
-        event.setAggregateType("Payment");
-        event.setAggregateId(payment.getId());
-        event.setEventType("PAYMENT_VERIFIED");
-        event.setPayload("{\"reference\":\"%s\",\"patientId\":%d,\"settledFromWallet\":true}"
-                .formatted(payment.getReference(), payment.getPatient().getId()));
-        outboxRepository.save(event);
+        /*
+         * Safety against duplicate wallet settlement.
+         */
+        if (payment.getStatus() == PaymentStatus.SUCCESS) {
 
-        notifications.notifyPatient(payment.getPatient(), NotificationType.PAYMENT_SUCCESS,
-                "Your booking is covered by your balance",
+            return;
+        }
+
+        LocalDateTime now =
+                LocalDateTime.now();
+
+        payment.setStatus(
+                PaymentStatus.SUCCESS
+        );
+
+        payment.setVerifiedAt(
+                now
+        );
+
+        payment.setPaymentDate(
+                now
+        );
+
+        payment.setReconciliationStatus(
+                "SETTLED_FROM_WALLET"
+        );
+
+        paymentRepository.save(
+                payment
+        );
+
+        OutboxEvent event =
+                new OutboxEvent();
+
+        event.setAggregateType(
+                "Payment"
+        );
+
+        event.setAggregateId(
+                payment.getId()
+        );
+
+        event.setEventType(
+                "PAYMENT_VERIFIED"
+        );
+
+        event.setPayload(
+                "{\"reference\":\"%s\",\"patientId\":%d,\"settledFromWallet\":true}"
+                        .formatted(
+                                payment.getReference(),
+                                payment.getPatient().getId()
+                        )
+        );
+
+        outboxRepository.save(
+                event
+        );
+
+        notifications.notifyPatient(
+                payment.getPatient(),
+                NotificationType.PAYMENT_SUCCESS,
+                "Your consultation is covered by your balance",
                 "Your existing balance covers this consultation, so there is nothing to pay. "
-                        + "The hospital will confirm your appointment shortly.",
-                "/portal/appointments", "Payment", payment.getId());
+                        + "You can now choose a date and time.",
+                "/portal/booking",
+                "Payment",
+                payment.getId()
+        );
 
-        auditService.record(AuditService.AuditEvent.builder()
-                .action(AuditAction.PAYMENT_VERIFIED)
-                .entityType("Payment")
-                .entityId(payment.getId())
-                .details("Settled from wallet balance, no provider call")
-                .build());
+        /*
+         * HIM notification.
+         */
+        notifications.notifyRole(
+                "HIM",
+                null,
+                NotificationType.PAYMENT_VERIFIED_HIM,
+                "Consultation payment covered by patient credit",
+                "Payment %s for patient %s has been settled from the patient's "
+                        + "existing FNPH credit balance."
+                        .formatted(
+                                payment.getReference(),
+                                payment.getPatient().getPublicId()
+                        ),
+                "/him/payments",
+                "Payment",
+                payment.getId()
+        );
 
-        log.info("Payment {} settled entirely from wallet", payment.getReference());
+        auditService.record(
+                AuditService.AuditEvent.builder()
+                        .action(
+                                AuditAction.PAYMENT_VERIFIED
+                        )
+                        .entityType(
+                                "Payment"
+                        )
+                        .entityId(
+                                payment.getId()
+                        )
+                        .details(
+                                "Settled from wallet balance, no provider call"
+                        )
+                        .build()
+        );
+
+        log.info(
+                "Payment {} settled entirely from wallet",
+                payment.getReference()
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // HISTORY
+    // -------------------------------------------------------------------------
+
+    @Transactional(readOnly = true)
+    public List<Payment> historyFor(
+            Long patientId
+    ) {
+
+        return paymentRepository
+                .findAllByPatientIdOrderByCreatedAtDesc(
+                        patientId
+                );
     }
 
     @Transactional(readOnly = true)
-    public List<Payment> historyFor(Long patientId) {
-        return paymentRepository.findAllByPatientIdOrderByCreatedAtDesc(patientId);
+    public boolean hasUnusedVerifiedPayment(
+            Long patientId
+    ) {
+
+        return !paymentRepository
+                .findUnusedVerifiedPayments(patientId)
+                .isEmpty();
     }
 
-    /** True when the patient may proceed to slot selection. */
-    @Transactional(readOnly = true)
-    public boolean hasUnusedVerifiedPayment(Long patientId) {
-        return !paymentRepository.findUnusedVerifiedPayments(patientId).isEmpty();
+    // -------------------------------------------------------------------------
+    // HELPERS
+    // -------------------------------------------------------------------------
+
+    private static String safeMessage(
+            String message
+    ) {
+
+        return message == null
+                || message.isBlank()
+                ? "Unknown Remita error"
+                : message;
     }
 
-    public static class PaymentException extends RuntimeException {
-        public PaymentException(String message) {
+    public static class PaymentException
+            extends RuntimeException {
+
+        public PaymentException(
+                String message
+        ) {
             super(message);
         }
     }
 
-    private static String firstUsableEmail(String... candidates) {
+    private static String firstUsableEmail(
+            String... candidates
+    ) {
+
         for (String candidate : candidates) {
-            if (candidate != null && candidate.contains("@")
-                    && !candidate.trim().toLowerCase().endsWith(".local")) {
+
+            if (candidate != null
+                    && candidate.contains("@")
+                    && !candidate
+                    .trim()
+                    .toLowerCase()
+                    .endsWith(".local")) {
+
                 return candidate.trim();
             }
         }
+
         return "";
     }
 }

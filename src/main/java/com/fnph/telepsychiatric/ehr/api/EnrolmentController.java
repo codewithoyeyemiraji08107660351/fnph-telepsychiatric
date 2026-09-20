@@ -29,23 +29,18 @@ public class EnrolmentController {
     @PostMapping("/lookup")
     @SecurityRequirements
     @Operation(
-            summary = "Step 1 — find my record and send me a code",
+            summary = "Step 1 — find my existing hospital record",
             description = """
-                    Matches an EHR number against the active snapshot and sends a
-                    six-digit code.
+                    Matches an EHR number against the active snapshot and creates a
+                    short-lived setup session. No patient notification is sent.
 
-                    **The EHR number alone is never enough.** Supply the date of birth or
-                    the last four digits of the phone the hospital holds. Either one plus
-                    the number is accepted.
+                    A supplied date of birth or last four phone digits is checked against
+                    the hospital record. Deployments may also allow EHR-only matching.
 
                     If a number alone returned a name, anyone could walk the range and
                     confirm that a named individual is a patient at a neuropsychiatric
                     hospital. That disclosure needs no account and no further step, which
                     makes it the likeliest attack on this service.
-
-                    **The code goes to the number on file**, never to one supplied here.
-                    Otherwise anyone who learned a number and a date of birth could point
-                    the account at their own phone.
 
                     **Every failure returns the same message.** Wrong number, wrong
                     corroboration, inactive record and already-enrolled are
@@ -63,7 +58,7 @@ public class EnrolmentController {
                     **Public.**
                     """)
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Matched. A code has been sent.",
+            @ApiResponse(responseCode = "200", description = "Matched. Continue to password setup.",
                     content = @Content(schema = @Schema(implementation = EnrolmentLookupResponse.class))),
             @ApiResponse(responseCode = "400",
                     description = "No match. The message is the same for every cause. Offer the "
@@ -81,10 +76,10 @@ public class EnrolmentController {
     @PostMapping("/complete")
     @SecurityRequirements
     @Operation(
-            summary = "Steps 2 and 3 — confirm the code and choose a password",
+            summary = "Step 2 — choose a password",
             description = """
-                    Verifies the code, creates the patient account and marks the contact
-                    route confirmed.
+                    Uses the short-lived setup reference from step one and creates the
+                    patient account with the password they choose.
 
                     The EHR number becomes the username, so all three sign-in routes
                     converge on one lookup.

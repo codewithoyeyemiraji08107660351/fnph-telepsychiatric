@@ -256,6 +256,13 @@ public class AuthenticationService {
         }
         Users user = found.get();
 
+        // Patients use the EHR-only self-service reset endpoint. Do not send
+        // password-reset notifications from this legacy email flow.
+        if (user.getPatient() != null) {
+            log.info("Patient password reset redirected to EHR self-service for {}", user.getPublicId());
+            return;
+        }
+
         // A patient account from online enrolment carries a placeholder address
         // and no verified-at, so every patient reset was silently skipped, and a
         // link would have gone nowhere. The address on the patient record is the
@@ -287,6 +294,24 @@ public class AuthenticationService {
                 context.ipAddress());
     }
 
+    /** Starts an EHR-only patient reset and returns the short-lived credential directly. */
+    @Transactional
+    public PatientPasswordResetResponse startPatientPasswordReset(
+            PatientPasswordResetRequest request, RequestContext context) {
+        String ehrNumber = request.ehrNumber().trim();
+        Users user = userRepository.findByPatient_EhrNumber(ehrNumber)
+                .filter(candidate -> candidate.getPatient() != null)
+                .filter(candidate -> candidate.getStatus() == UserStatus.ACTIVE)
+                .filter(candidate -> Boolean.TRUE.equals(candidate.getIsActive()))
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "No active patient account matches that EHR number. Check the number or enrol first."));
+
+        LocalDateTime expiresAt = LocalDateTime.now()
+                .plusMinutes(properties.getPasswordResetTokenMinutes());
+        String raw = issueToken(user, AccountTokenPurpose.PASSWORD_RESET, expiresAt, context);
+        return new PatientPasswordResetResponse(raw, expiresAt);
+    }
+
     @Transactional
     public void resetPassword(ResetPasswordRequest request, RequestContext context) {
         AccountToken accountToken = usableToken(request.token(), AccountTokenPurpose.PASSWORD_RESET);
@@ -316,7 +341,11 @@ public class AuthenticationService {
         // them, including the current one.
         sessionService.revokeAll(user.getId(), null, "Password reset");
 
-        emailService.sendPasswordChanged(user.getEmail(), user.getFullName(), now, context.ipAddress());
+        // Patient EHR self-service recovery deliberately has no email, SMS or
+        // in-app notification. Staff and centre resets retain their email.
+        if (user.getPatient() == null) {
+            emailService.sendPasswordChanged(user.getEmail(), user.getFullName(), now, context.ipAddress());
+        }
     }
 
     @Transactional

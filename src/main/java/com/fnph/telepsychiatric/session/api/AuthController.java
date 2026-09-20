@@ -299,6 +299,16 @@ public class AuthController {
         authenticationService.requestPasswordReset(request.identifier(), context(http, null));
     }
 
+    @PostMapping("/password/patient/forgot")
+    @SecurityRequirements
+    @Operation(summary = "Start an EHR-only patient password reset",
+            description = "Checks for an active patient account with this EHR number and returns a short-lived reset credential directly. No email, SMS or in-app notification is sent.")
+    public ResponseEntity<PatientPasswordResetResponse> patientForgotPassword(
+            @Valid @RequestBody PatientPasswordResetRequest request, HttpServletRequest http) {
+        return ResponseEntity.ok(authenticationService.startPatientPasswordReset(
+                request, context(http, null)));
+    }
+
     @PostMapping("/password/reset")
     @SecurityRequirements
     @Operation(
@@ -311,8 +321,8 @@ public class AuthController {
                     reset, they may hold a live session, and leaving it running would make
                     the reset pointless.
 
-                    A confirmation email is sent, so a reset the account holder did not
-                    request reaches them.
+                    Staff and centre accounts receive a confirmation email. Patient
+                    EHR self-service recovery sends no email, SMS or in-app notification.
 
                     **Public.** The token is the credential.
                     """)

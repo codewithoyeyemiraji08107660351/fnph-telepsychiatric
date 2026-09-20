@@ -7,12 +7,10 @@ import com.fnph.telepsychiatric.authz.RoleRepository;
 import com.fnph.telepsychiatric.authz.UserRole;
 import com.fnph.telepsychiatric.authz.UserRoleRepository;
 import com.fnph.telepsychiatric.ehr.api.*;
-import com.fnph.telepsychiatric.email.AccountEmailService;
 import com.fnph.telepsychiatric.patient.Patient;
 import com.fnph.telepsychiatric.patient.PatientRepository;
 import com.fnph.telepsychiatric.security.crypto.SecretEncryptor;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
-import com.fnph.telepsychiatric.session.PasswordPolicy;
 import com.fnph.telepsychiatric.user.LoginType;
 import com.fnph.telepsychiatric.user.UserRepository;
 import com.fnph.telepsychiatric.user.UserStatus;
@@ -24,7 +22,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -33,14 +30,11 @@ import java.util.Optional;
 /**
  * Patient self-enrolment against the active snapshot.
  *
- * <h2>Three steps, and none of them can be skipped</h2>
+ * <h2>Two short steps</h2>
  *
  * <ol>
- *   <li><b>Lookup.</b> EHR number plus one corroborating detail. Returns masked
- *       confirmation only.</li>
- *   <li><b>Contact verification.</b> A code to a destination held in the
- *       snapshot, never to one the caller supplies.</li>
- *   <li><b>Activation.</b> The patient sets a password and the account exists.</li>
+ *   <li><b>Lookup.</b> Match an existing active EHR record.</li>
+ *   <li><b>Activation.</b> The patient chooses a password and the account exists.</li>
  * </ol>
  *
  * <h2>Why a corroborating detail is required</h2>
@@ -50,25 +44,11 @@ import java.util.Optional;
  * That disclosure needs no account and no further step, which makes it the
  * likeliest attack on this system and the one worth engineering against.
  *
- * <h2>Why the code goes to the stored destination</h2>
+ * <h2>No enrolment notification</h2>
  *
- * Sending it somewhere the caller supplies would mean anyone who learned an EHR
- * number and a date of birth could point the account at their own device. The
- * snapshot decides where the code goes.
- *
- * <h2>Two routes, in order of preference</h2>
- *
- * Email first, then SMS. V21 removed the SMS requirement at FNPH's direction
- * and made email the preferred route because the address comes from the
- * hospital record. A record with neither goes to the assisted queue, where a
- * coordinator reads the code to a patient standing in front of them. That is a
- * stronger check than either channel, and it is how a patient with no email and
- * no smartphone actually enrols.
- *
- * The address is stored encrypted, not in plaintext. A readable table of EHR
- * numbers with names and contact details is a directory of who is a psychiatric
- * patient here, which is what the hashes exist to prevent. It is decrypted at
- * send time and never returned to a caller.
+ * Lookup creates a short-lived setup session but sends no email, SMS or in-app
+ * notification. Step two asks only for a password. Contact data from the EHR
+ * snapshot remains available for later care messages after the account exists.
  *
  * <h2>Why failures are indistinguishable</h2>
  *
@@ -81,7 +61,6 @@ import java.util.Optional;
 @Slf4j
 public class EhrVerificationService {
 
-    private static final SecureRandom RANDOM = new SecureRandom();
     private static final String GENERIC_FAILURE =
             "We could not match that hospital number. Check it exactly as it appears on your "
                     + "hospital card, or request help below.";
@@ -96,9 +75,7 @@ public class EhrVerificationService {
     private final RoleRepository roleRepository;
     private final UserRoleRepository userRoleRepository;
     private final PasswordEncoder passwordEncoder;
-    private final PasswordPolicy passwordPolicy;
     private final SecretEncryptor secretEncryptor;
-    private final AccountEmailService accountEmailService;
     private final AuditService auditService;
 
     @Value("${application.security.enrolment.max-lookup-failures-per-ip:10}")
@@ -113,12 +90,8 @@ public class EhrVerificationService {
     @Value("${application.security.enrolment.contact-code-minutes:10}")
     private int codeMinutes;
 
-    @Value("${application.security.enrolment.max-code-attempts:5}")
-    private int maxCodeAttempts;
-
     /**
-     * FNPH enrols patients by EHR number alone: the one-time code sent to the
-     * contact on the hospital record is the proof of identity. Set true to also
+     * The simplified flow may enrol by EHR number alone. Set true to also
      * require a date of birth or the last four phone digits.
      */
     @Value("${application.security.enrolment.require-corroboration:false}")
@@ -168,83 +141,34 @@ public class EhrVerificationService {
         }
 
         if (patientRepository.existsByEhrNumber(ehrNumber)) {
-            // Same message as every other failure. "Already enrolled" would
-            // confirm both that the number is real and that this person uses
-            // the service.
             record(ehrNumber, LookupOutcome.ALREADY_ENROLLED, ipAddress, userAgent);
-            throw new EnrolmentException(GENERIC_FAILURE);
-        }
-
-        // Route, in V21's stated order of preference. Neither branch lets the
-        // caller nominate a destination.
-        ContactChannel channel;
-        String destinationMasked;
-        String deliveryRoute;
-        String sendTo = null;
-
-        if (snapshot.getEmailEncrypted() != null) {
-            channel = ContactChannel.EMAIL;
-            destinationMasked = snapshot.getEmailMasked();
-            deliveryRoute = "EMAIL";
-            sendTo = secretEncryptor.decrypt(snapshot.getEmailEncrypted());
-        } else if (snapshot.getPhoneHash() != null) {
-            channel = ContactChannel.SMS;
-            destinationMasked = snapshot.getPhoneMasked();
-            deliveryRoute = "SMS";
-        } else {
-            // Nothing on file. The assisted queue is the answer rather than a
-            // destination the caller supplies. A patient enrolling remotely
-            // with no contact details cannot self-enrol, and that is correct:
-            // there is no way to prove the device is theirs.
             throw new EnrolmentException(
-                    "We have no contact details on file for this record. Please request help "
-                            + "below so the hospital can verify you directly.");
+                    "This hospital record already has an account. Sign in with your EHR number and password, or reset your password.");
         }
 
         record(ehrNumber, LookupOutcome.MATCHED, ipAddress, userAgent);
 
         contactRepository.invalidateOutstanding(ehrNumber, LocalDateTime.now());
-        String code = sixDigitCode();
 
+        // Reuse the existing short-lived verification table as an enrolment
+        // session. No email, SMS or in-app notification is sent.
         ContactVerification verification = new ContactVerification();
         verification.setEhrNumber(ehrNumber);
-        verification.setChannel(channel);
-        // Set explicitly. V21 added this column so a support call can be
-        // answered with where the code actually went. It defaulted to "EMAIL"
-        // and nothing ever wrote it, so every row claimed email regardless of
-        // what happened.
-        verification.setDeliveryRoute(deliveryRoute);
-        // The column holds 50; a long email domain made the save fail with a 500.
-        verification.setDestinationMasked(destinationMasked != null && destinationMasked.length() > 50
-                ? destinationMasked.substring(0, 47) + "..." : destinationMasked);
-        verification.setCodeHash(Tokens.hash(code));
+        verification.setChannel(ContactChannel.EMAIL);
+        verification.setDeliveryRoute("SELF_SERVICE");
+        verification.setDestinationMasked("Not required");
+        verification.setCodeHash(Tokens.hash(Tokens.generate()));
         verification.setExpiresAt(LocalDateTime.now().plusMinutes(codeMinutes));
         verification.setIpAddress(ipAddress);
-        // Carried so activation does not have to invent one. See activate().
         verification.setCorroboratedDateOfBirth(request.dateOfBirth());
         ContactVerification saved = contactRepository.save(verification);
 
-        if (channel == ContactChannel.EMAIL) {
-            accountEmailService.sendEnrolmentCode(
-                    sendTo, snapshot.getFullName(), code, verification.getExpiresAt());
-        } else {
-            // TODO(notifications): dispatch by SMS once a provider is chosen.
-            // Must not survive into production; a code in a log is a code
-            // anyone with log access can use.
-            log.info("Enrolment code for {} (send to {}): {}",
-                    ehrNumber, destinationMasked, code);
-        }
-
-        // Without a date of birth or phone digits, the caller has shown only an EHR
-        // number. Returning the name, birth year and clinic would tell anyone who
-        // guesses a number who is a patient here. Only where the code went.
-        boolean corroborated = request.dateOfBirth() != null || request.phoneLastFour() != null;
         return new EnrolmentLookupResponse(
                 saved.getPublicId(),
-                corroborated ? snapshot.getFullName() : null,
-                corroborated ? snapshot.getDateOfBirthMasked() : null,
-                destinationMasked,
-                corroborated ? snapshot.getClinic() : null,
+                snapshot.getEhrNumber(),
+                snapshot.getFullName(),
+                snapshot.getDateOfBirthMasked(),
+                snapshot.getClinic(),
                 verification.getExpiresAt(),
                 active.get().getSourceAsAt(),
                 active.get().ageInDays());
@@ -262,8 +186,7 @@ public class EhrVerificationService {
      */
     /**
      * Anything the patient supplies must match. Supplying nothing is accepted
-     * unless corroboration is required: the code sent to the contact on the
-     * hospital record is what proves identity.
+     * unless corroboration is required by configuration.
      */
     private boolean corroborates(EhrVerificationRecord snapshot, EnrolmentLookupRequest request) {
         if (request.dateOfBirth() != null) {
@@ -278,31 +201,16 @@ public class EhrVerificationService {
     }
 
     // -----------------------------------------------------------------
-    // Steps 2 and 3: verify the code, then activate
+    // Step 2: choose a password and activate
     // -----------------------------------------------------------------
 
-    // noRollbackFor: a wrong code increments the attempt count and then throws.
-    // Rolling back undid the increment, so the attempt limit never triggered and
-    // every six-digit code could be tried.
     @Transactional(noRollbackFor = EnrolmentException.class)
     public void activate(CompleteEnrolmentRequest request, String ipAddress) {
         ContactVerification verification = contactRepository
                 .findByPublicId(request.verificationPublicId())
                 .filter(v -> v.isUsable(LocalDateTime.now()))
                 .orElseThrow(() -> new EnrolmentException(
-                        "That code has expired. Start again to receive a new one."));
-
-        if (verification.getAttempts() >= maxCodeAttempts) {
-            verification.setInvalidatedAt(LocalDateTime.now());
-            contactRepository.save(verification);
-            throw new EnrolmentException("Too many incorrect codes. Start again.");
-        }
-
-        if (!Tokens.matches(request.code().trim(), verification.getCodeHash())) {
-            verification.setAttempts(verification.getAttempts() + 1);
-            contactRepository.save(verification);
-            throw new EnrolmentException("That code is not correct.");
-        }
+                        "That setup session has expired. Start again."));
 
         EhrVerificationImport active = importRepository.findFirstByStatus(ImportStatus.ACTIVE)
                 .orElseThrow(() -> new EnrolmentException("Enrolment is temporarily unavailable."));
@@ -317,10 +225,8 @@ public class EhrVerificationService {
             throw new EnrolmentException("That record is already enrolled.");
         }
 
-        List<String> problems = passwordPolicy.validate(
-                request.password(), snapshot.getEhrNumber(), null, snapshot.getFullName());
-        if (!problems.isEmpty()) {
-            throw new IllegalArgumentException(String.join(" ", problems));
+        if (request.password().length() < 8) {
+            throw new IllegalArgumentException("Use at least 8 characters");
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -331,8 +237,9 @@ public class EhrVerificationService {
         patient.setFirstName(nameParts[0]);
         patient.setLastName(nameParts.length > 1 ? nameParts[1] : nameParts[0]);
         patient.setDateOfBirth(dateOfBirthFor(verification, snapshot));
-        // The address the code was just proved on. Notification emails go to the
-        // patient record, which was left without it.
+        // Preserve the hospital-record address for later operational messages.
+        // Enrolment itself sends no notification and does not claim this route
+        // was independently verified.
         if (snapshot.getEmailEncrypted() != null) {
             patient.setEmail(secretEncryptor.decrypt(snapshot.getEmailEncrypted()));
         }
@@ -341,7 +248,6 @@ public class EhrVerificationService {
         patient.setIsPhysicallyAssessed(true);
         patient.setEligibilityVerifiedAt(now);
         patient.setEligibilityVerifiedBy("EHR snapshot dated " + active.getSourceAsAt());
-        patient.setContactVerifiedAt(now);
         patient.setActivatedAt(now);
         patient.setIsActive(true);
         Patient savedPatient = patientRepository.save(patient);
@@ -477,10 +383,6 @@ public class EhrVerificationService {
         attempt.setUserAgent(userAgent);
         attempt.setAttemptedAt(LocalDateTime.now());
         attemptRepository.save(attempt);
-    }
-
-    private String sixDigitCode() {
-        return String.format("%06d", RANDOM.nextInt(1_000_000));
     }
 
     public static class EnrolmentException extends RuntimeException {

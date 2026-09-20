@@ -87,6 +87,9 @@ public class Payment extends BaseEntity {
     @Column(name = "payment_date")
     private LocalDateTime paymentDate;
 
+    @Column(name = "payment_link", length = 1000)
+    private String paymentLink;;
+
     /** Set only by server-side verification against Remita, never by a browser return page. */
     @Column(name = "verified_at")
     private LocalDateTime verifiedAt;

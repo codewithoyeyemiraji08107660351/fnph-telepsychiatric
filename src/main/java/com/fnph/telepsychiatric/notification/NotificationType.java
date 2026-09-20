@@ -33,6 +33,7 @@ public enum NotificationType {
     /** An assignee has been given work on a confirmed appointment. */
     APPOINTMENT_ASSIGNED,
 
+    PAYMENT_VERIFIED_HIM,
     /** A reserved slot returned to the pool because payment did not complete. */
     SLOT_HOLD_EXPIRED
 }

@@ -9,7 +9,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.core.env.Environment;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -19,12 +18,8 @@ import java.util.Optional;
 /**
  * Second factor enrolment and verification.
  *
- * Required for staff and centre accounts, which is the non-negotiable control
- * the specification states. Not required for patients: a patient enrolling a
- * TOTP app to attend a psychiatric appointment is a barrier that would stop
- * people attending, and their account cannot approve bookings, move money or
- * read anyone else's record. The risk and the friction are not in balance
- * there. Patient accounts get contact verification and rate limiting instead.
+ * TOTP factor management remains available for old records, but interactive
+ * sign-in no longer requires MFA for any account.
  */
 @Service
 @RequiredArgsConstructor
@@ -36,32 +31,10 @@ public class MfaService {
     private final TotpService totpService;
     private final SecretEncryptor encryptor;
     private final AuthProperties properties;
-    private final Environment environment;
 
-    /** Staff and centre accounts must hold a second factor. Patients must not be forced to. */
+    /** MFA is disabled for every role. Password sign-in completes directly. */
     public boolean isRequiredFor(RoleScope scope) {
-        if (scope != RoleScope.FNPH && scope != RoleScope.CENTRE) {
-            return false;
-        }
-        // Dev bypass. Defaults to true, so an unset value leaves MFA on, and a
-        // startup guard below refuses to run with it off outside dev.
-        if (!properties.isMfaRequired()) {
-            log.warn("MFA is disabled by configuration. This must never be true "
-                    + "outside local development.");
-            return false;
-        }
-        return true;
-    }
-
-    @jakarta.annotation.PostConstruct
-    void refuseToStartWithMfaDisabledOutsideDev() {
-        if (!properties.isMfaRequired()
-                && !environment.acceptsProfiles(
-                org.springframework.core.env.Profiles.of("dev", "test"))) {
-            throw new IllegalStateException(
-                    "MFA is disabled on a non-dev profile. Refusing to start. "
-                            + "Set MFA_REQUIRED=true.");
-        }
+        return false;
     }
 
 

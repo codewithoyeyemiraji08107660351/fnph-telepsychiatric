@@ -10,13 +10,9 @@ import java.time.LocalDate;
 
 @Schema(name = "EnrolmentLookupRequest",
         description = """
-                Step one of patient enrolment: prove you hold the record.
-
-                The EHR number alone is never enough. Supply **either** the date of \
-                birth **or** the last four digits of the phone number the hospital has \
-                on file. Either one plus the number is accepted; both are not required, \
-                because a phone number recorded years ago would push legitimate patients \
-                into the exception queue.
+                Step one of patient enrolment: find the existing hospital record.
+                Date of birth or the last four phone digits can be supplied as an
+                additional match where the deployment requires it.
                 """)
 public record EnrolmentLookupRequest(
 
@@ -28,13 +24,13 @@ public record EnrolmentLookupRequest(
 
         @Past(message = "The date of birth must be in the past")
         @Schema(description = "Your date of birth, exactly as the hospital recorded it. "
-                + "Supply this or `phoneLastFour`.",
+                + "This may be optional in the simplified enrolment flow.",
                 example = "1988-04-12", nullable = true)
         LocalDate dateOfBirth,
 
         @Pattern(regexp = "^[0-9]{4}$", message = "Enter exactly four digits")
         @Schema(description = "The last four digits of your phone number. "
-                + "Supply this or `dateOfBirth`.",
+                + "This may be optional in the simplified enrolment flow.",
                 example = "5678", nullable = true)
         String phoneLastFour
 ) {

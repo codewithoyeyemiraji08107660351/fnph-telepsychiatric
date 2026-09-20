@@ -306,37 +306,30 @@ public class TriageService {
     }
 
     /**
-     * Refuses a booking unless the patient has accepted the current consent and
-     * the most recent triage, on the current question set, said PROCEED.
+     * Refuses a booking unless the patient completed first-login consent and
+     * their one-time triage said PROCEED.
      *
      * The stop screen in the patient app was the only thing enforcing this, so
      * anyone calling the booking API directly skipped the safety questions.
      * The most recent response decides, not the most recent PROCEED: a patient
      * who passed last month and stopped today must not book on the old answer.
      *
-     * How long a PROCEED stays valid is not decided here. That is an FNPH
-     * clinical governance question; until it is answered, a new question set
-     * version is what forces a fresh triage.
+     * The patient completes these steps once during onboarding. Publishing a
+     * later document or question set does not interrupt an existing patient's
+     * consultation flow.
      */
     @Transactional(readOnly = true)
     public void requireClearedForBooking(Long patientId, String audience) {
-        String consentVersion = activeConsent(audience).getVersion();
-        boolean consented = consentAcceptances.findFirstByPatientIdOrderByAcceptedAtDesc(patientId)
-                .map(a -> consentVersion.equals(a.getConsentVersion()))
-                .orElse(false);
+        boolean consented = consentAcceptances
+                .findFirstByPatientIdOrderByAcceptedAtDesc(patientId).isPresent();
         if (!consented) {
-            throw new TriageException("Accept the current consent before choosing a time.");
+            throw new TriageException("Complete the first-login consent before choosing a time.");
         }
 
-        String questionVersion = activeQuestions(audience).getVersion();
         TriageResponse latest = responses.findAllByPatientIdOrderBySubmittedAtDesc(patientId)
                 .stream().findFirst()
                 .orElseThrow(() -> new TriageException(
-                        "Answer the safety questions before choosing a time."));
-        if (!questionVersion.equals(latest.getTriageVersion())) {
-            throw new TriageException(
-                    "The safety questions have changed. Answer them again before choosing a time.");
-        }
+                        "Complete the first-login safety questions before choosing a time."));
         if (!"PROCEED".equals(latest.getOutcome())) {
             throw new TriageException(
                     "Your answers mean a video appointment is not right for you now. "

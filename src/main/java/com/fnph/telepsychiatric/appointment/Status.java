@@ -4,20 +4,20 @@ package com.fnph.telepsychiatric.appointment;
  * The appointment lifecycle, in the sequence FNPH confirmed.
  *
  * <pre>
- *   SLOT_HELD ──pay──> AWAITING_APPROVAL ──approve──> APPROVED ──> IN_PROGRESS ──> COMPLETED
+ *   verified payment + chosen slot ──> AWAITING_APPROVAL ──approve──> APPROVED ──> IN_PROGRESS ──> COMPLETED
  *       │                      │                          │
  *       └──hold lapses──> EXPIRED                          ├──> CANCELLED
  *                              └──reject──> REJECTED       └──> NO_SHOW
  * </pre>
  *
- * The patient chooses a time, pays for it, and only then does the Hub
- * Coordinator review. Money moves before approval, which is why a rejection
- * leaves the amount on the patient's wallet rather than taking it.
+ * The patient pays, chooses a time, and only then does the Hub Coordinator
+ * review. The booking transaction briefly uses {@code SLOT_HELD} while it
+ * links the verified payment, intake and selected time.
  */
 public enum Status {
 
     /**
-     * Slot reserved, payment not yet confirmed.
+     * Slot reserved while a booking is being linked to a verified payment.
      *
      * Time-limited. An abandoned payment must not hold a clinic slot
      * indefinitely, or the schedule shows as full while nobody is booked.

@@ -10,233 +10,382 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import java.math.RoundingMode;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Remita REST client.
- *
- * <h2>Two calls matter</h2>
- *
- * <b>Initiation</b> registers the order and returns an RRR, the reference the
- * patient quotes at any payment channel.
- *
- * <b>Verification</b> is server-to-server and is the only thing that moves a
- * payment to SUCCESS. A browser landing on a success page proves nothing: the
- * URL can be opened directly, replayed, or reached after a failed payment.
- *
- * <h2>Protected against Remita being slow or down</h2>
- *
- * A circuit breaker and a retry, because an unprotected outbound call to a
- * third party will eventually exhaust the request threads and take the whole
- * clinical portal down with it. A patient who cannot pay for ten minutes is a
- * much smaller problem than a doctor who cannot open a consultation.
- *
- * <h2>Endpoint shapes</h2>
- *
- * Paths and hash construction follow Remita's published eChannel API. Confirm
- * them against the credentials pack FNPH supplies before the pilot: Remita
- * varies these between merchant configurations, and the hash is unforgiving
- * about field order.
- */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class RemitaClient {
+
+    private static final String CHARGE_PATH =
+            "/services/connect-gateway/api/v1/payment-engine/payment/charge";
+
+    private static final String VERIFY_PATH =
+            "/services/connect-gateway/api/v1/payment-engine/payment/merchant/verify/";
 
     private final RemitaProperties properties;
     private final ObjectMapper objectMapper;
 
     private WebClient client() {
         return WebClient.builder()
-                .baseUrl(properties.getBaseUrl())
+                .baseUrl(properties.getApiBaseUrl())
                 .defaultHeader("Content-Type", "application/json")
-                .defaultHeader("Authorization", authorizationHeader())
+                .defaultHeader("Accept", "application/json")
+                .defaultHeader("secretKey", properties.getSecretKey())
                 .build();
     }
 
-    private String authorizationHeader() {
-        return "remitaConsumerKey=%s,remitaConsumerToken=%s"
-                .formatted(properties.getMerchantId(), properties.getApiToken());
-    }
-
     /**
-     * Registers an order and returns the RRR.
+     * Creates a Remita Connect Gateway payment.
      *
-     * @param orderId internal reference, echoed back by Remita
-     * @param amount  the fee, in naira
+     * The application stores monetary amounts in NGN as BigDecimal.
+     * Remita Connect Gateway expects amount in minor units (kobo)
+     * as a whole number.
+     *
+     * Example:
+     *   10000.00 NGN -> 1000000 kobo
      */
     @CircuitBreaker(name = "remita", fallbackMethod = "initiateUnavailable")
     @Retry(name = "remita")
-    public InitiationResult initiate(String orderId, BigDecimal amount,
-                                     String payerName, String payerEmail, String payerPhone) {
+    public InitiationResult initiate(
+            String paymentIdentifier,
+            BigDecimal amount,
+            String firstName,
+            String lastName,
+            String email,
+            String phone
+    ) {
 
-        String hash = sha512(properties.getMerchantId() + properties.getServiceTypeId()
-                + orderId + amount.toPlainString() + properties.getApiKey());
+        if (amount == null) {
+            throw new IllegalArgumentException("Payment amount cannot be null");
+        }
 
-        // Map.of rejects null values, and a patient who skipped the optional
-        // email made this throw before Remita was ever called.
-        Map<String, Object> body = new java.util.LinkedHashMap<>();
-        body.put("serviceTypeId", properties.getServiceTypeId());
-        body.put("amount", amount.toPlainString());
-        body.put("orderId", orderId);
-        body.put("payerName", payerName == null ? "" : payerName);
-        body.put("payerEmail", payerEmail == null ? "" : payerEmail);
-        body.put("payerPhone", payerPhone == null ? "" : payerPhone);
-        body.put("description", "FNPH Kaduna telepsychiatry consultation");
-        body.put("responseurl", properties.getResponseUrl());
+        if (amount.signum() <= 0) {
+            throw new IllegalArgumentException("Payment amount must be greater than zero");
+        }
 
-        String raw = client().post()
-                .uri("/echannelsvc/merchant/api/paymentinit")
-                .header("Authorization", "remitaConsumerKey=%s,remitaConsumerToken=%s"
-                        .formatted(properties.getMerchantId(), hash))
+        /*
+         * Convert NGN to kobo.
+         *
+         * ₦10,000.00 -> 1,000,000
+         *
+         * Rounding is deliberately HALF_UP after forcing two decimal
+         * places because NGN is stored with scale 2.
+         */
+        long amountInKobo = amount
+                .setScale(2, RoundingMode.HALF_UP)
+                .movePointRight(2)
+                .longValueExact();
+
+        Map<String, Object> body = new LinkedHashMap<>();
+
+        body.put("firstName", safe(firstName));
+        body.put("lastName", safe(lastName));
+        body.put("email", safe(email));
+        String remitaPhone = (phone == null || phone.isBlank())
+                ? "08107660351"
+                : phone.trim();
+
+        body.put("phoneNumber", remitaPhone);
+
+        /*
+         * IMPORTANT:
+         * Keep the FNPH reference as paymentIdentifier.
+         * Do not replace it with a Remita-generated reference.
+         */
+        body.put("paymentIdentifier", paymentIdentifier);
+
+        body.put("currency", "NGN");
+
+        body.put(
+                "narration",
+                "FNPH Kaduna telepsychiatry consultation"
+        );
+
+        /*
+         * Remita Connect Gateway requires a whole number
+         * representing the amount in minor units (kobo).
+         */
+        body.put("amount", amountInKobo);
+
+        log.info(
+                "Creating Remita Connect Gateway payment: reference={}, amountNGN={}, amountKobo={}",
+                paymentIdentifier,
+                amount,
+                remitaPhone,
+                amountInKobo
+        );
+
+        String raw = client()
+                .post()
+                .uri(CHARGE_PATH)
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(String.class)
                 .timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
                 .block();
 
-        return parseInitiation(raw);
+        return parseInitiation(
+                paymentIdentifier,
+                raw
+        );
     }
 
     /**
-     * Asks Remita what actually happened.
+     * Connect Gateway Check Status endpoint.
      *
-     * This is the authority. Anything the browser reported is a hint that a
-     * verification should run, not a result.
+     * The current Connect Gateway test environment may not return
+     * a useful documented verification body. Therefore TEST mode
+     * should rely on the configured charge-success behavior.
      */
     @CircuitBreaker(name = "remita", fallbackMethod = "verifyUnavailable")
     @Retry(name = "remita")
-    public VerificationResult verify(String rrr) {
-        String hash = sha512(rrr + properties.getApiKey() + properties.getMerchantId());
+    public VerificationResult verify(String transRef) {
 
-        String raw = client().get()
-                .uri("/echannelsvc/{merchantId}/{rrr}/{hash}/status.reg.json",
-                        properties.getMerchantId(), rrr, hash)
-                // Remita authenticates the status call with the same hash as the
-                // path, not the API token the client sends by default.
-                .header("Authorization", "remitaConsumerKey=%s,remitaConsumerToken=%s"
-                        .formatted(properties.getMerchantId(), hash))
+        log.info(
+                "Checking Remita payment status: transRef={}",
+                transRef
+        );
+
+        String raw = client()
+                .get()
+                .uri(VERIFY_PATH + transRef)
                 .retrieve()
                 .bodyToMono(String.class)
                 .timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
                 .block();
 
-        return parseVerification(raw);
+        return parseVerification(
+                transRef,
+                raw
+        );
     }
 
-    // -----------------------------------------------------------------
+    private InitiationResult parseInitiation(
+            String reference,
+            String raw
+    ) {
 
-    private InitiationResult parseInitiation(String raw) {
         try {
-            String json = stripJsonp(raw);
-            JsonNode node = objectMapper.readTree(json);
-            String status = text(node, "statuscode");
-            String rrr = text(node, "RRR");
 
-            // "025" is Remita's success code for initiation. Treated as the
-            // only success rather than assuming anything non-error worked.
-            boolean ok = "025".equals(status) && rrr != null && !rrr.isBlank();
-            return new InitiationResult(ok, rrr, status, text(node, "status"), raw);
-        } catch (Exception e) {
-            log.error("Could not parse Remita initiation response: {}", e.getMessage());
-            return new InitiationResult(false, null, "PARSE_ERROR", e.getMessage(), raw);
-        }
-    }
+            JsonNode root = objectMapper.readTree(
+                    raw == null ? "{}" : raw
+            );
 
-    private VerificationResult parseVerification(String raw) {
-        try {
-            String json = stripJsonp(raw);
-            JsonNode node = objectMapper.readTree(json);
+            String status = text(root, "status");
+            String message = text(root, "message");
 
-            String status = text(node, "status");
-            String message = text(node, "message");
-            String amountText = text(node, "amount");
-            BigDecimal amount = amountText == null ? null : new BigDecimal(amountText);
+            String paymentLink = null;
 
-            // "00" and "01" are Remita's successful-payment codes. Every other
-            // value is treated as not paid. Failing closed here is the whole
-            // point: guessing that an unknown code means success would unlock
-            // booking for someone who has not paid.
-            boolean paid = "00".equals(status) || "01".equals(status);
+            JsonNode data = root.get("data");
 
-            return new VerificationResult(true, paid, PENDING_CODES.contains(status), status, message, amount,
-                    text(node, "orderId"), text(node, "transactiontime"),
-                    text(node, "paymentDate"), raw);
-        } catch (Exception e) {
-            log.error("Could not parse Remita verification response: {}", e.getMessage());
-            return new VerificationResult(false, false, false, "PARSE_ERROR", e.getMessage(),
-                    null, null, null, null, raw);
-        }
-    }
-
-    /** Remita sometimes wraps JSON in a JSONP callback. */
-    private String stripJsonp(String raw) {
-        if (raw == null) {
-            return "{}";
-        }
-        String trimmed = raw.trim();
-        int open = trimmed.indexOf('{');
-        int close = trimmed.lastIndexOf('}');
-        return (open >= 0 && close > open) ? trimmed.substring(open, close + 1) : trimmed;
-    }
-
-    private String text(JsonNode node, String field) {
-        JsonNode value = node.get(field);
-        return value == null || value.isNull() ? null : value.asText();
-    }
-
-    static String sha512(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-512")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(128);
-            for (byte b : digest) {
-                hex.append(Character.forDigit((b >> 4) & 0xF, 16));
-                hex.append(Character.forDigit(b & 0xF, 16));
+            if (data != null && !data.isNull()) {
+                paymentLink = text(data, "paymentLink");
             }
-            return hex.toString();
+
+            /*
+             * Connect Gateway status 00 means the charge was accepted.
+             *
+             * Do NOT require paymentLink for the charge itself to be
+             * considered successful. The payment link is useful for
+             * hosted checkout, but it is not the same thing as the
+             * charge status.
+             */
+            boolean successful = "00".equals(status);
+
+            log.info(
+                    "Remita charge response: reference={}, status={}, paymentLinkPresent={}",
+                    reference,
+                    status,
+                    paymentLink != null && !paymentLink.isBlank()
+            );
+
+            return new InitiationResult(
+                    successful,
+                    paymentLink,
+                    reference,
+                    status,
+                    message,
+                    raw
+            );
+
         } catch (Exception e) {
-            throw new IllegalStateException("SHA-512 unavailable", e);
+
+            log.error(
+                    "Unable to parse Remita charge response for {}: {}",
+                    reference,
+                    e.getMessage()
+            );
+
+            return new InitiationResult(
+                    false,
+                    null,
+                    reference,
+                    "PARSE_ERROR",
+                    e.getMessage(),
+                    raw
+            );
         }
     }
 
-    // Fallbacks. Never claim success when the provider is unreachable.
+    private VerificationResult parseVerification(
+            String transRef,
+            String raw
+    ) {
 
-    @SuppressWarnings("unused")
-    private InitiationResult initiateUnavailable(String orderId, BigDecimal amount,
-                                                 String payerName, String payerEmail,
-                                                 String payerPhone, Throwable t) {
-        log.error("Remita initiation unavailable for order {}: {}", orderId, t.getMessage());
-        return new InitiationResult(false, null, "UNAVAILABLE",
-                "Payment could not be started. Try again shortly.", null);
+        if (raw == null || raw.isBlank()) {
+
+            return new VerificationResult(
+                    true,
+                    false,
+                    true,
+                    "EMPTY_RESPONSE",
+                    "Remita returned no verification response.",
+                    null,
+                    transRef,
+                    null,
+                    raw
+            );
+        }
+
+        try {
+
+            JsonNode root = objectMapper.readTree(raw);
+
+            String status = text(root, "status");
+            String message = text(root, "message");
+
+            boolean paid = "00".equals(status);
+
+            return new VerificationResult(
+                    true,
+                    paid,
+                    !paid,
+                    status,
+                    message,
+                    null,
+                    transRef,
+                    null,
+                    raw
+            );
+
+        } catch (Exception e) {
+
+            log.error(
+                    "Unable to parse Remita verification response for {}: {}",
+                    transRef,
+                    e.getMessage()
+            );
+
+            return new VerificationResult(
+                    false,
+                    false,
+                    false,
+                    "PARSE_ERROR",
+                    e.getMessage(),
+                    null,
+                    transRef,
+                    null,
+                    raw
+            );
+        }
     }
 
-    @SuppressWarnings("unused")
-    private VerificationResult verifyUnavailable(String rrr, Throwable t) {
-        log.error("Remita verification unavailable for {}: {}", rrr, t.getMessage());
-        // reachable=false, so the caller leaves the payment PENDING and retries.
-        // Treating unreachable as unpaid would strand a patient who has paid.
-        return new VerificationResult(false, false, false, "UNAVAILABLE", t.getMessage(),
-                null, null, null, null, null);
+    private String text(
+            JsonNode node,
+            String field
+    ) {
+
+        if (node == null) {
+            return null;
+        }
+
+        JsonNode value = node.get(field);
+
+        if (value == null || value.isNull()) {
+            return null;
+        }
+
+        return value.asText();
     }
 
-    public record InitiationResult(boolean successful, String rrr, String statusCode,
-                                   String message, String rawResponse) {
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
-    /**
-     * Remita codes meaning "the RRR exists and has not been paid yet": 021
-     * transaction pending, 025 reference generated, 040 initial request OK.
-     * A payment in this state is waiting for the patient, not failed.
-     */
-    static final java.util.Set<String> PENDING_CODES = java.util.Set.of("021", "025", "040");
+    private InitiationResult initiateUnavailable(
+            String paymentIdentifier,
+            BigDecimal amount,
+            String firstName,
+            String lastName,
+            String email,
+            String phone,
+            Throwable throwable
+    ) {
 
-    public record VerificationResult(boolean reachable, boolean paid, boolean pending, String statusCode,
-                                     String message, BigDecimal amount, String orderId,
-                                     String transactionTime, String paymentDate,
-                                     String rawResponse) {
+        log.error(
+                "Remita charge unavailable for {}: {}",
+                paymentIdentifier,
+                throwable.getMessage()
+        );
+
+        return new InitiationResult(
+                false,
+                null,
+                paymentIdentifier,
+                "UNAVAILABLE",
+                "Remita payment service is temporarily unavailable.",
+                null
+        );
+    }
+
+    private VerificationResult verifyUnavailable(
+            String transRef,
+            Throwable throwable
+    ) {
+
+        log.error(
+                "Remita verification unavailable for {}: {}",
+                transRef,
+                throwable.getMessage()
+        );
+
+        return new VerificationResult(
+                false,
+                false,
+                true,
+                "UNAVAILABLE",
+                throwable.getMessage(),
+                null,
+                transRef,
+                null,
+                null
+        );
+    }
+
+    public record InitiationResult(
+            boolean successful,
+            String paymentLink,
+            String reference,
+            String statusCode,
+            String message,
+            String rawResponse
+    ) {
+    }
+
+    public record VerificationResult(
+            boolean reachable,
+            boolean paid,
+            boolean pending,
+            String statusCode,
+            String message,
+            BigDecimal amount,
+            String reference,
+            String paymentDate,
+            String rawResponse
+    ) {
     }
 }
