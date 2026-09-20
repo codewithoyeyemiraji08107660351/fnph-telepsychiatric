@@ -112,11 +112,13 @@ public class RemitaClient {
         body.put("amount", amountInKobo);
 
         log.info(
-                "Creating Remita Connect Gateway payment: reference={}, amountNGN={}, phone={}, amountKobo={}",
+                "Remita charge request: url={}, reference={}, amount={}, phone={}, email={}, currency={}",
+                properties.getApiBaseUrl() + CHARGE_PATH,
                 paymentIdentifier,
-                amount,
+                amountInKobo,
                 remitaPhone,
-                amountInKobo
+                safe(email),
+                "NGN"
         );
 
         String raw = client()
@@ -197,10 +199,12 @@ public class RemitaClient {
             boolean successful = "00".equals(status);
 
             log.info(
-                    "Remita charge response: reference={}, status={}, paymentLinkPresent={}",
+                    "Remita charge response: reference={}, status={}, message={}, paymentLinkPresent={}, rawResponse={}",
                     reference,
                     status,
-                    paymentLink != null && !paymentLink.isBlank()
+                    message,
+                    paymentLink != null && !paymentLink.isBlank(),
+                    raw
             );
 
             return new InitiationResult(
