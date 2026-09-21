@@ -16,5 +16,5 @@ public class JwtProperties {
     private long accessTokenMinutes = 15;
 
     private long refreshTokenDays = 7;
-    private long inactivityTimeoutMinutes = 30;
+    private long inactivityTimeoutMinutes = 7776000;
 }
