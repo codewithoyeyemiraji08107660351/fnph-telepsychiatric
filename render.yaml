@@ -1,0 +1,218 @@
+# Render Blueprint for the FNPH Kaduna Telepsychiatry backend.
+#
+# Converted from a Dokploy/Compose stack. Two things don't translate
+# directly and are called out where they appear:
+#
+#   1. Render has no managed MySQL (only managed Postgres), so `mysql`
+#      below is a self-hosted private service with a persistent disk —
+#      same durability model as before, but you own patching/upgrades
+#      and it cannot run as more than one instance.
+#   2. Render has no managed RabbitMQ either, so `rabbitmq` is likewise
+#      a self-hosted private service with a disk.
+#
+# Everything under services connects over Render's private network using
+# the service's `name` as hostname — equivalent to Compose's `internal`
+# network. Only `backend` is public, matching Traefik only exposing it
+# before.
+#
+# Secrets (sync: false) are NOT set here. After the first blueprint sync,
+# fill them in under each service's Environment tab, exactly as you did
+# in Dokploy's Environment tab.
+
+services:
+  # ---------------------------------------------------------------------
+  # Backend — the only public-facing service.
+  # ---------------------------------------------------------------------
+  - type: web
+    name: backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: standard          # >= 2GB RAM; adjust to your load
+    region: frankfurt        # closest Render region to NG; change if you prefer another
+    healthCheckPath: /actuator/health
+    autoDeployTrigger: commit
+    disk:
+      name: fnph-storage
+      mountPath: /var/lib/fnph/storage
+      sizeGB: 10
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: SERVER_PORT
+        value: 8080
+      # Render's Docker runtime routes traffic to the port named by PORT
+      # (default 10000 if unset) — point it at the same port the app
+      # actually listens on.
+      - key: PORT
+        value: 8080
+
+      - key: APP_BASE_URL
+        sync: false          # https://<your-backend>.onrender.com
+      - key: APP_PORTAL_URL
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+
+      - key: DB_HOST
+        fromService:
+          type: pserv
+          name: mysql
+          property: host
+      - key: DB_PORT
+        value: 3306
+      - key: DB_NAME
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_USE_SSL
+        value: "true"
+
+      - key: REDIS_HOST
+        fromService:
+          type: pserv
+          name: redis
+          property: host
+      - key: REDIS_PORT
+        value: 6379
+      - key: REDIS_PASSWORD
+        sync: false
+
+      - key: RABBITMQ_HOST
+        fromService:
+          type: pserv
+          name: rabbitmq
+          property: host
+      - key: RABBITMQ_PORT
+        value: 5672
+      - key: RABBITMQ_USERNAME
+        sync: false
+      - key: RABBITMQ_PASSWORD
+        sync: false
+
+      - key: JWT_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: MFA_REQUIRED
+        value: "false"
+
+      - key: MAIL_HOST
+        sync: false
+      - key: MAIL_PORT
+        value: 587
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: NOTIFICATION_EMAIL_ENABLED
+        value: "true"
+
+      - key: REMITA_API_BASE_URL
+        sync: false
+      - key: REMITA_SECRET_KEY
+        sync: false
+      - key: REMITA_MERCHANT_ID
+        sync: false
+      - key: REMITA_SERVICE_TYPE_ID
+        sync: false
+      - key: REMITA_API_KEY
+        sync: false
+      - key: REMITA_API_TOKEN
+        sync: false
+      - key: REMITA_WEBHOOK_SECRET
+        sync: false
+      - key: REMITA_READ_TIMEOUT_SECONDS
+        value: 30
+      - key: REMITA_TEST_PHONE
+        value: ""
+
+      - key: VIDEO_PROVIDER
+        value: daily
+      - key: DAILY_API_KEY
+        sync: false
+      - key: DAILY_DOMAIN
+        sync: false
+      - key: DAILY_WEBHOOK_SECRET
+        sync: false
+
+      - key: ENROLMENT_REQUIRE_CORROBORATION
+        value: "false"
+      - key: UPLOAD_REQUIRE_CLEAN_SCAN
+        value: "false"
+      - key: JAVA_OPTS
+        value: "-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError"
+
+  # ---------------------------------------------------------------------
+  # MySQL — self-hosted, since Render has no managed MySQL.
+  # ---------------------------------------------------------------------
+  - type: pserv
+    name: mysql
+    runtime: docker
+    dockerfilePath: ./docker/mysql/Dockerfile
+    dockerContext: ./docker/mysql
+    plan: standard           # >= 2GB RAM to match innodb-buffer-pool-size
+    region: frankfurt
+    disk:
+      name: mysql-data
+      mountPath: /var/lib/mysql
+      sizeGB: 20
+    envVars:
+      - key: MYSQL_ROOT_PASSWORD
+        sync: false
+      - key: MYSQL_DATABASE
+        sync: false           # same value as backend's DB_NAME
+      - key: MYSQL_USER
+        sync: false           # same value as backend's DB_USERNAME
+      - key: MYSQL_PASSWORD
+        sync: false           # same value as backend's DB_PASSWORD
+
+  # ---------------------------------------------------------------------
+  # Redis — self-hosted rather than Render's managed Key Value service,
+  # so appendonly persistence and the requirepass behaviour stay
+  # identical to what's running in Dokploy today. (Render's managed Key
+  # Value offering is Redis-compatible but doesn't take a Dockerfile or a
+  # custom startup command — swap this for a `type: keyvalue` block if
+  # you'd rather use it and don't need appendonly persistence.)
+  # ---------------------------------------------------------------------
+  - type: pserv
+    name: redis
+    runtime: docker
+    dockerImage:
+      registry: docker
+      image: redis:7.4-alpine
+    dockerCommand: sh -c 'exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"'
+    plan: starter
+    region: frankfurt
+    disk:
+      name: redis-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: REDIS_PASSWORD
+        sync: false           # same value as backend's REDIS_PASSWORD
+
+  # ---------------------------------------------------------------------
+  # RabbitMQ — self-hosted, since Render has no managed RabbitMQ.
+  # ---------------------------------------------------------------------
+  - type: pserv
+    name: rabbitmq
+    runtime: docker
+    dockerImage:
+      registry: docker
+      image: rabbitmq:3.13-alpine
+    plan: starter
+    region: frankfurt
+    disk:
+      name: rabbitmq-data
+      mountPath: /var/lib/rabbitmq
+      sizeGB: 5
+    envVars:
+      - key: RABBITMQ_DEFAULT_USER
+        sync: false           # same value as backend's RABBITMQ_USERNAME
+      - key: RABBITMQ_DEFAULT_PASS
+        sync: false           # same value as backend's RABBITMQ_PASSWORD
