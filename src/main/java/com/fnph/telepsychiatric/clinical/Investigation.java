@@ -74,7 +74,7 @@ public class Investigation extends BaseEntity implements TenantOwned {
     @JoinColumn(name = "doctor_id", nullable = false, foreignKey = @ForeignKey(name = "fk_investigations_doctor"))
     private Users doctor;
 
-    @Column(name = "issue_number", nullable = false, length = 50)
+   @Column(name = "issue_number", nullable = false, unique = true, length = 32)
     private String issueNumber;
 
     @Column(name = "status", nullable = false, length = 30)

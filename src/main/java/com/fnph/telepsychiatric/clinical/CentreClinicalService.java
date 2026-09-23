@@ -50,6 +50,8 @@ public class CentreClinicalService {
     private final ProfessionalReviewService reviewService;
     private final IssuedDocumentService documentService;
     private final AuditService auditService;
+    private final InvestigationNumberService investigationNumberService; 
+    private final PrescriptionNumberService prescriptionNumberService;
 
     // -----------------------------------------------------------------
     // Clinical note
@@ -229,6 +231,7 @@ public class CentreClinicalService {
         prescription.setBundle(bundle);
         prescription.setClinicalInformation(clinicalInformation);
         prescription.setIssueDate(LocalDate.now());
+        prescription.setIssueNumber(prescriptionNumberService.next());
         prescription.setStatus(ClinicalDocumentStatus.PENDING_REVIEW);
         Prescription saved = prescriptionRepository.save(prescription);
 
@@ -335,6 +338,7 @@ public class CentreClinicalService {
         investigation.setBundle(bundle);
         investigation.setClinicalInformation(clinicalInformation);
         investigation.setIssueDate(LocalDate.now());
+        investigation.setIssueNumber(investigationNumberService.next());
         investigation.setStatus(ClinicalDocumentStatus.PENDING_REVIEW);
         Investigation saved = investigationRepository.save(investigation);
 

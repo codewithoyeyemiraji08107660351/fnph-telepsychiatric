@@ -59,6 +59,8 @@ public class ClinicalService {
     private final IssuedDocumentService documentService;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final InvestigationNumberService investigationNumberService; 
+    private final PrescriptionNumberService prescriptionNumberService;
 
     // -----------------------------------------------------------------
     // Clinical note
@@ -218,6 +220,7 @@ public class ClinicalService {
         prescription.setClinicalInformation(clinicalInformation);
         prescription.setIssueDate(LocalDate.now());
         prescription.setStatus(ClinicalDocumentStatus.PENDING_REVIEW);
+        prescription.setIssueNumber(prescriptionNumberService.next());
         Prescription saved = prescriptionRepository.save(prescription);
 
         lines.forEach(line -> {
@@ -317,6 +320,7 @@ public class ClinicalService {
         investigation.setBundle(bundle);
         investigation.setClinicalInformation(clinicalInformation);
         investigation.setIssueDate(LocalDate.now());
+        investigation.setIssueNumber(investigationNumberService.next());
         investigation.setStatus(ClinicalDocumentStatus.PENDING_REVIEW);
         Investigation saved = investigationRepository.save(investigation);
 
