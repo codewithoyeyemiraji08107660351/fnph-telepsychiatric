@@ -44,6 +44,7 @@ public class AuditService {
 
     private final AuditRepository auditRepository;
     private final UserRepository userRepository;
+    private final AuditChainLockRepository auditChainLockRepository;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(AuditEvent event) {
@@ -95,23 +96,33 @@ public class AuditService {
      * Links this row to the previous one, so removing or editing any row breaks
      * every hash after it.
      */
-    private void linkToChain(AuditLog entry) {
-        String previous = auditRepository.findFirstByOrderByIdDesc()
-                .map(AuditLog::getChainHash)
-                .orElse("GENESIS");
+  private void linkToChain(AuditLog entry) {
 
-        entry.setPreviousChainHash(previous);
-        entry.setChainHash(Tokens.hash(String.join("|",
-                previous,
-                nullSafe(entry.getUsername()),
-                nullSafe(entry.getAction()),
-                nullSafe(entry.getEntityType()),
-                String.valueOf(entry.getEntityId()),
-                nullSafe(entry.getOutcome()),
-                nullSafe(entry.getBeforeHash()),
-                nullSafe(entry.getAfterHash()),
-                String.valueOf(entry.getPerformedAt()))));
-    }
+    // Serialise all audit-chain writes at the database level.
+    // PESSIMISTIC_WRITE holds this row lock until the REQUIRES_NEW
+    // transaction commits.
+    auditChainLockRepository.findLockedById(1L)
+            .orElseThrow(() ->
+                    new IllegalStateException("Audit chain lock row is missing"));
+
+    String previous = auditRepository.findFirstByOrderByIdDesc()
+            .map(AuditLog::getChainHash)
+            .orElse("GENESIS");
+
+    entry.setPreviousChainHash(previous);
+
+    entry.setChainHash(Tokens.hash(String.join("|",
+            previous,
+            nullSafe(entry.getUsername()),
+            nullSafe(entry.getAction()),
+            nullSafe(entry.getEntityType()),
+            String.valueOf(entry.getEntityId()),
+            nullSafe(entry.getOutcome()),
+            nullSafe(entry.getBeforeHash()),
+            nullSafe(entry.getAfterHash()),
+            String.valueOf(entry.getPerformedAt())
+    )));
+}
 
     private String nullSafe(String value) {
         return value == null ? "" : value;

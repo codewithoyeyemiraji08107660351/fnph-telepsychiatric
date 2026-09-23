@@ -85,10 +85,10 @@ public class AuditLog extends ImmutableEntity {
      * Tamper-evident, not tamper-proof. That is the honest guarantee and the
      * achievable one.
      */
-    @Column(name = "chain_hash", length = 64)
+   @Column(name = "chain_hash", nullable = false, length = 64)
     private String chainHash;
 
-    @Column(name = "previous_chain_hash", length = 64)
+    @Column(name = "previous_chain_hash", nullable = false, length = 64)
     private String previousChainHash;
 
     /** Why the action was taken, where the action requires a stated reason. */

@@ -50,9 +50,13 @@ public class AuditChainVerifier {
 
                 if (!expectedPrevious.equals(entry.getPreviousChainHash())) {
                     // A row was removed, or one was inserted out of order.
-                    breaks.add(new Break(entry.getId(), entry.getPerformedAt().toString(),
-                            "Previous hash does not match the row before it. A row has been "
-                                    + "removed or inserted."));
+                    breaks.add(new Break(
+                                        entry.getId(),
+                                        entry.getPerformedAt().toString(),
+                                        "CHAIN_LINK: expected previous hash "
+                                                + expectedPrevious
+                                                + " but found "
+                                                + entry.getPreviousChainHash()));
                 }
 
                 String recomputed = Tokens.hash(String.join("|",
@@ -68,8 +72,13 @@ public class AuditChainVerifier {
 
                 if (!recomputed.equals(entry.getChainHash())) {
                     // The row's own content no longer matches its hash.
-                    breaks.add(new Break(entry.getId(), entry.getPerformedAt().toString(),
-                            "Row content does not match its recorded hash. This row has been edited."));
+                    breaks.add(new Break(
+                                        entry.getId(),
+                                        entry.getPerformedAt().toString(),
+                                        "CONTENT_HASH: stored "
+                                                + entry.getChainHash()
+                                                + " but recomputed "
+                                                + recomputed));
                 }
 
                 expectedPrevious = entry.getChainHash();
