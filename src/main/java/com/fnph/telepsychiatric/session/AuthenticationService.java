@@ -65,12 +65,7 @@ public class AuthenticationService {
     @Transactional(noRollbackFor = AuthenticationFailedException.class)
     public LoginResponse login(LoginRequest request, RequestContext context) {
         String identifier = request.username().trim();
-
-        if (isRateLimited(identifier, context.ipAddress())) {
-            record(identifier, null, LoginOutcome.RATE_LIMITED, "Too many attempts", context);
-            throw new AuthenticationFailedException(
-                    "Too many attempts. Wait a few minutes before trying again.");
-        }
+    
 
         Optional<Users> found = userRepository.findByUsernameIgnoreCase(identifier)
                 .or(() -> userRepository.findByEmailIgnoreCase(identifier));
@@ -84,16 +79,6 @@ public class AuthenticationService {
         }
 
         Users user = found.get();
-
-        // The same account can be entered by username or email. Count both
-        // aliases together so switching identifiers cannot bypass lockout.
-        if (loginAttemptRepository.countRecentFailuresForUser(user.getId(),
-                LocalDateTime.now().minusMinutes(properties.getFailureWindowMinutes()))
-                >= properties.getMaxFailedAttempts()) {
-            record(identifier, user, LoginOutcome.RATE_LIMITED, "Too many attempts", context);
-            throw new AuthenticationFailedException(
-                    "Too many attempts. Wait a few minutes before trying again.");
-        }
 
         if (user.getStatus() == UserStatus.INVITED) {
             record(identifier, user, LoginOutcome.ACCOUNT_NOT_ACTIVATED, null, context);
