@@ -37,7 +37,7 @@ public class ManualEhrRecordService {
                         .orElse(null);
 
         return manualRepository.findAllByOrderByUpdatedAtDesc()
-                .map(row -> response(
+                .stream().map(row -> response(
                         row,
                         imported(active, row.getEhrNumber()),
                         active != null))
