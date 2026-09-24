@@ -259,7 +259,7 @@ public class EhrVerificationService {
         // The EHR number becomes the username, which is how all three login
         // types converge on one lookup.
         account.setUsername(snapshot.getEhrNumber().toLowerCase());
-        account.setEmail(username + "@patient.fnph.local");
+        account.setEmail(snapshot.getEhrNumber().toLowerCase() + "@patient.fnph.local");
         account.setPassword("{noop}" + Tokens.generate());
         account.setFirstName(patient.getFirstName());
         account.setLastName(patient.getLastName());
