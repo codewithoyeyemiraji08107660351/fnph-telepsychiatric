@@ -16,22 +16,9 @@ import java.time.LocalDate;
                 """)
 public record EnrolmentLookupRequest(
 
-        @NotBlank(message = "Enter your EHR number")
-        @Size(max = 50)
-        @Schema(description = "The number printed on your hospital card.",
-                example = "FNPH/2019/04417", requiredMode = Schema.RequiredMode.REQUIRED)
-        String ehrNumber,
+        @NotBlank(message = "Hospital number is required")
+        @Size(max = 50, message = "Hospital number is too long")
+        String ehrNumber
 
-        @Past(message = "The date of birth must be in the past")
-        @Schema(description = "Your date of birth, exactly as the hospital recorded it. "
-                + "This may be optional in the simplified enrolment flow.",
-                example = "1988-04-12", nullable = true)
-        LocalDate dateOfBirth,
-
-        @Pattern(regexp = "^[0-9]{4}$", message = "Enter exactly four digits")
-        @Schema(description = "The last four digits of your phone number. "
-                + "This may be optional in the simplified enrolment flow.",
-                example = "5678", nullable = true)
-        String phoneLastFour
 ) {
 }

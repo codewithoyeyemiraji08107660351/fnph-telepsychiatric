@@ -26,52 +26,73 @@ public class EnrolmentController {
 
     private final EhrVerificationService verificationService;
 
-    @PostMapping("/lookup")
-    @SecurityRequirements
-    @Operation(
-            summary = "Step 1 — find my existing hospital record",
-            description = """
-                    Matches an EHR number against the active snapshot and creates a
-                    short-lived setup session. No patient notification is sent.
+  @PostMapping("/lookup")
+@SecurityRequirements
+@Operation(
+        summary = "Step 1 — find my existing hospital record",
+        description = """
+                Matches the supplied EHR number against the active hospital EHR
+                snapshot and creates a short-lived setup session.
 
-                    A supplied date of birth or last four phone digits is checked against
-                    the hospital record. Deployments may also allow EHR-only matching.
+                The EHR number is the only information used for self-enrolment
+                verification. Date of birth, phone number, email address and
+                other demographic fields are not required for this step.
 
-                    If a number alone returned a name, anyone could walk the range and
-                    confirm that a named individual is a patient at a neuropsychiatric
-                    hospital. That disclosure needs no account and no further step, which
-                    makes it the likeliest attack on this service.
+                The record must exist in the active snapshot and must be marked
+                as active.
 
-                    **Every failure returns the same message.** Wrong number, wrong
-                    corroboration, inactive record and already-enrolled are
-                    indistinguishable, so the form cannot be used to test whether an EHR
-                    number is real. Staff can see the real outcome.
+                An already-enrolled EHR number receives the same generic failure
+                response as an unmatched or inactive number.
 
-                    Rate limited two ways: five failures against one number and ten from
-                    one address in thirty minutes.
+                The response includes recordsAsAt and recordsAgeInDays. These
+                values identify how old the offline EHR snapshot is.
 
-                    The response includes `recordsAsAt` and `recordsAgeInDays`. **Show
-                    them.** This is a snapshot of the offline hospital record, not a live
-                    link, and a patient whose details changed last week needs to know why
-                    they are not reflected.
+                No patient notification is sent during lookup.
 
-                    **Public.**
-                    """)
-    @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Matched. Continue to password setup.",
-                    content = @Content(schema = @Schema(implementation = EnrolmentLookupResponse.class))),
-            @ApiResponse(responseCode = "400",
-                    description = "No match. The message is the same for every cause. Offer the "
-                            + "help request.",
-                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "429", description = "Too many attempts.",
-                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
-    })
-    public ResponseEntity<EnrolmentLookupResponse> lookup(
-            @Valid @RequestBody EnrolmentLookupRequest request, HttpServletRequest http) {
-        return ResponseEntity.ok(verificationService.lookup(request, clientIp(http),
-                http.getHeader("User-Agent")));
-    }
+                Public.
+                """)
+@ApiResponses({
+        @ApiResponse(
+                responseCode = "200",
+                description = "EHR number matched. Continue to password setup.",
+                content = @Content(
+                        schema = @Schema(
+                                implementation = EnrolmentLookupResponse.class
+                        )
+                )
+        ),
+        @ApiResponse(
+                responseCode = "400",
+                description = "EHR number could not be matched or the record is "
+                        + "inactive/already enrolled.",
+                content = @Content(
+                        schema = @Schema(
+                                implementation = ErrorResponse.class
+                        )
+                )
+        ),
+        @ApiResponse(
+                responseCode = "429",
+                description = "Too many lookup attempts.",
+                content = @Content(
+                        schema = @Schema(
+                                implementation = ErrorResponse.class
+                        )
+                )
+        )
+})
+public ResponseEntity<EnrolmentLookupResponse> lookup(
+        @Valid @RequestBody EnrolmentLookupRequest request,
+        HttpServletRequest http) {
+
+    return ResponseEntity.ok(
+            verificationService.lookup(
+                    request,
+                    clientIp(http),
+                    http.getHeader("User-Agent")
+            )
+    );
+}
 
     @PostMapping("/complete")
     @SecurityRequirements
