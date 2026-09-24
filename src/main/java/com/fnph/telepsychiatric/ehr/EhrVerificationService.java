@@ -258,9 +258,10 @@ public class EhrVerificationService {
         Users account = new Users();
         // The EHR number becomes the username, which is how all three login
         // types converge on one lookup.
-        account.setUsername(snapshot.getEhrNumber().toLowerCase());
-        account.setEmail(snapshot.getEhrNumber().toLowerCase() + "@patient.fnph.local");
-        account.setPassword("{noop}" + Tokens.generate());
+        String username = snapshot.getEhrNumber().trim().toLowerCase();
+        account.setUsername(username);
+        account.setEmail(username + "@patient.fnph.local");
+        account.setPassword(passwordEncoder.encode(request.password()));
         account.setFirstName(patient.getFirstName());
         account.setLastName(patient.getLastName());
         account.setPatient(savedPatient);
