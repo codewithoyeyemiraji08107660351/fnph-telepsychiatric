@@ -95,65 +95,63 @@ public class ManualEnrolmentController {
                             + "request was named.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
-    @Transactional
-    public ResponseEntity<Map<String, Object>> create(
-            @Parameter(required = true) @RequestParam @NotBlank String ehrNumber,
-            @RequestParam @NotBlank @Size(max = 100) String firstName,
-            @RequestParam @NotBlank @Size(max = 100) String lastName,
-            @RequestParam @NotNull @Past LocalDate dateOfBirth,
-            @RequestParam(required = false) String phoneNumber,
-            @RequestParam(required = false) String email,
-            @Parameter(description = "The verification request this closes.", required = true)
-            @RequestParam String verificationRequestPublicId,
-            @Parameter(description = "How this person was verified. Not that they were.",
-                    required = true)
-            @RequestParam String verifiedHow) {
+   @Transactional
+public ResponseEntity<Map<String, Object>> create(
+        @Parameter(required = true) @RequestParam @NotBlank String ehrNumber,
+        @RequestParam @NotBlank @Size(max = 100) String firstName,
+        @RequestParam @NotBlank @Size(max = 100) String lastName,
+        @RequestParam @NotNull @Past LocalDate dateOfBirth,
+        @RequestParam(required = false) String phoneNumber,
+        @Parameter(description = "The verification request this closes.", required = true)
+        @RequestParam String verificationRequestPublicId,
+        @Parameter(description = "How this person was verified. Not that they were.",
+                required = true)
+        @RequestParam String verifiedHow) {
 
-        if (verifiedHow == null || verifiedHow.isBlank()) {
-            throw new IllegalArgumentException(
-                    "Say how this person was verified. \"Confirmed\" tells a later reader "
-                            + "nothing, and this record bypasses every automatic check.");
-        }
-        if (patientRepository.existsByEhrNumber(ehrNumber)) {
-            throw new IllegalArgumentException(
-                    "A patient already exists for " + ehrNumber);
-        }
-
-        var request = requestRepository.findByPublicId(verificationRequestPublicId)
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "No such verification request. This endpoint closes a request "
-                                + "somebody made, it does not create patients from nothing."));
-
-        Patient patient = new Patient();
-        patient.setEhrNumber(ehrNumber);
-        patient.setFirstName(firstName);
-        patient.setLastName(lastName);
-        patient.setDateOfBirth(dateOfBirth);
-        patient.setPhoneNumber(phoneNumber);
-        patient.setEmail(email);
-        patient.setIsEligible(false);
-        patient.setIsPhysicallyAssessed(false);
-        patient.setIsActive(false);
-        Patient saved = patientRepository.save(patient);
-
-        request.setResultingPatient(saved);
-        requestRepository.save(request);
-
-        auditService.record(AuditService.AuditEvent.builder()
-                .action(AuditAction.RECORD_CREATED)
-                .entityType("Patient")
-                .entityId(saved.getId())
-                .details("Created manually against verification request "
-                        + verificationRequestPublicId)
-                .reason(verifiedHow)
-                .build());
-
-        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
-                "publicId", saved.getPublicId(),
-                "ehrNumber", saved.getEhrNumber(),
-                "active", false,
-                "next", "Record the eligibility check, then activate"));
+    if (verifiedHow == null || verifiedHow.isBlank()) {
+        throw new IllegalArgumentException(
+                "Say how this person was verified. \"Confirmed\" tells a later reader "
+                        + "nothing, and this record bypasses every automatic check.");
     }
+    if (patientRepository.existsByEhrNumber(ehrNumber)) {
+        throw new IllegalArgumentException(
+                "A patient already exists for " + ehrNumber);
+    }
+
+    var request = requestRepository.findByPublicId(verificationRequestPublicId)
+            .orElseThrow(() -> new EntityNotFoundException(
+                    "No such verification request. This endpoint closes a request "
+                            + "somebody made, it does not create patients from nothing."));
+
+    Patient patient = new Patient();
+    patient.setEhrNumber(ehrNumber);
+    patient.setFirstName(firstName);
+    patient.setLastName(lastName);
+    patient.setDateOfBirth(dateOfBirth);
+    patient.setPhoneNumber(phoneNumber);
+    patient.setIsEligible(false);
+    patient.setIsPhysicallyAssessed(false);
+    patient.setIsActive(false);
+    Patient saved = patientRepository.save(patient);
+
+    request.setResultingPatient(saved);
+    requestRepository.save(request);
+
+    auditService.record(AuditService.AuditEvent.builder()
+            .action(AuditAction.RECORD_CREATED)
+            .entityType("Patient")
+            .entityId(saved.getId())
+            .details("Created manually against verification request "
+                    + verificationRequestPublicId)
+            .reason(verifiedHow)
+            .build());
+
+    return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
+            "publicId", saved.getPublicId(),
+            "ehrNumber", saved.getEhrNumber(),
+            "active", false,
+            "next", "Record the eligibility check, then activate"));
+}
 
     @PostMapping("/{patientPublicId}/verify")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).PATIENT_VERIFY)")
@@ -249,9 +247,7 @@ public class ManualEnrolmentController {
 
         Users account = new Users();
         account.setUsername(username);
-        account.setEmail(patient.getEmail() == null
-                ? username + "@patient.fnph.local" : patient.getEmail());
-        // A placeholder that cannot be used. The setup link is the only way in.
+        account.setEmail(username + "@patient.fnph.local");
         account.setPassword("{noop}" + Tokens.generate());
         account.setFirstName(patient.getFirstName());
         account.setLastName(patient.getLastName());

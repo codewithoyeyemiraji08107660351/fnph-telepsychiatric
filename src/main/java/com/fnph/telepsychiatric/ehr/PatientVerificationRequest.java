@@ -34,10 +34,10 @@ public class PatientVerificationRequest extends BaseEntity {
     @Column(name = "full_name", nullable = false, length = 150)
     private String fullName;
 
-    @Column(name = "date_of_birth", nullable = false)
+    @Column(name = "date_of_birth")
     private LocalDate dateOfBirth;
 
-    @Column(name = "phone_number", nullable = false, length = 20)
+    @Column(name = "phone_number",  length = 20)
     private String phoneNumber;
 
     @Column(name = "email", length = 100)

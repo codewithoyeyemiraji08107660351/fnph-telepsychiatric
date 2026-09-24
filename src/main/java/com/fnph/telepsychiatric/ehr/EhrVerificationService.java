@@ -259,8 +259,8 @@ public class EhrVerificationService {
         // The EHR number becomes the username, which is how all three login
         // types converge on one lookup.
         account.setUsername(snapshot.getEhrNumber().toLowerCase());
-        account.setEmail(snapshot.getEhrNumber().toLowerCase() + "@patient.fnph.local");
-        account.setPassword(passwordEncoder.encode(request.password()));
+        account.setEmail(username + "@patient.fnph.local");
+        account.setPassword("{noop}" + Tokens.generate());
         account.setFirstName(patient.getFirstName());
         account.setLastName(patient.getLastName());
         account.setPatient(savedPatient);
@@ -337,32 +337,30 @@ public class EhrVerificationService {
     // -----------------------------------------------------------------
 
     @Transactional
-    public String requestVerification(VerificationHelpRequest request, String ipAddress) {
-        boolean alreadyOpen = requestRepository.existsByEhrNumberClaimedAndStatusIn(
-                request.ehrNumber().trim(),
-                List.of(VerificationRequestStatus.SUBMITTED,
-                        VerificationRequestStatus.WITH_HIM,
-                        VerificationRequestStatus.WITH_ICT));
+public String requestVerification(VerificationHelpRequest request, String ipAddress) {
+    boolean alreadyOpen = requestRepository.existsByEhrNumberClaimedAndStatusIn(
+            request.ehrNumber().trim(),
+            List.of(VerificationRequestStatus.SUBMITTED,
+                    VerificationRequestStatus.WITH_HIM,
+                    VerificationRequestStatus.WITH_ICT));
 
-        if (!alreadyOpen) {
-            PatientVerificationRequest entry = new PatientVerificationRequest();
-            entry.setEhrNumberClaimed(request.ehrNumber().trim());
-            entry.setFullName(request.fullName().trim());
-            entry.setDateOfBirth(request.dateOfBirth());
-            entry.setPhoneNumber(request.phoneNumber().trim());
-            entry.setEmail(request.email());
-            entry.setPreferredContact(request.preferredContact() == null
-                    ? "SMS" : request.preferredContact());
-            entry.setSupportingNote(request.supportingNote());
-            entry.setIpAddress(ipAddress);
-            requestRepository.save(entry);
-        }
-
-        // The same reply either way. A different response for a duplicate would
-        // reveal that a request already exists for that number.
-        return "Your request has been received. The hospital will contact you on the number "
-                + "you provided. This usually takes one working day.";
+    if (!alreadyOpen) {
+        PatientVerificationRequest entry = new PatientVerificationRequest();
+        entry.setEhrNumberClaimed(request.ehrNumber().trim());
+        entry.setFullName(request.fullName().trim());
+        entry.setDateOfBirth(request.dateOfBirth());
+        entry.setPhoneNumber(request.phoneNumber() == null ? null : request.phoneNumber().trim());
+        entry.setEmail(request.email());
+        entry.setPreferredContact(request.preferredContact() == null
+                ? "SMS" : request.preferredContact());
+        entry.setSupportingNote(request.supportingNote());
+        entry.setIpAddress(ipAddress);
+        requestRepository.save(entry);
     }
+
+    return "Your request has been received. The hospital will contact you on the number "
+            + "you provided. This usually takes one working day.";
+}
 
     // -----------------------------------------------------------------
 

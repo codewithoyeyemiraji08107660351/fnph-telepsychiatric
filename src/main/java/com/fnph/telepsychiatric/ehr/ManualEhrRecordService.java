@@ -45,6 +45,7 @@ public class ManualEhrRecordService {
         ManualEhrRecord row = new ManualEhrRecord();
         apply(row, request, false);
         ManualEhrRecord saved = manualRepository.save(row);
+        syncToActiveImport(saved);
         audit(saved, AuditAction.EHR_MANUAL_RECORD_CREATED, request.reason(), "Manual EHR record created");
         return currentResponse(saved);
     }
@@ -61,6 +62,7 @@ public class ManualEhrRecordService {
                 .ifPresent(other -> { throw new IllegalArgumentException("Another manual record already uses that EHR number."); });
         apply(row, request, true);
         ManualEhrRecord saved = manualRepository.save(row);
+        syncToActiveImport(saved);
         flagEnrolledPatient(saved, "Manual EHR details were edited and require HIM review.");
         audit(saved, AuditAction.EHR_MANUAL_RECORD_UPDATED, request.reason(), "Manual EHR record updated");
         return currentResponse(saved);
@@ -101,6 +103,42 @@ public class ManualEhrRecordService {
         return response(saved, imported(active, saved.getEhrNumber()), true);
     }
 
+    /**
+     * Writes a just-saved manual record through to the active import
+     * automatically, so the two are never left out of sync waiting for someone
+     * to notice a DIFFERENT badge and click Sync by hand. Manual is the
+     * governed overlay and is already authoritative for enrolment (see
+     * effectiveRecord below); this keeps the imported table's own copy honest
+     * about that rather than stale.
+     *
+     * Silent on purpose when no import is active: there is nothing to write
+     * through to yet, and the record's own create/update reason already covers
+     * the audit trail for this save.
+     */
+    private void syncToActiveImport(ManualEhrRecord manual) {
+        EhrVerificationImport active = importRepository.findFirstByStatus(ImportStatus.ACTIVE).orElse(null);
+        if (active == null) return;
+
+        EhrVerificationRecord imported = imported(active, manual.getEhrNumber());
+        boolean created = imported == null;
+        if (created) {
+            imported = new EhrVerificationRecord();
+            imported.setEhrImport(active);
+            imported.setEhrNumber(manual.getEhrNumber());
+        }
+        copy(manual, imported);
+        recordRepository.save(imported);
+        if (created) {
+            active.setValidRowCount(active.getValidRowCount() + 1);
+            active.setRowCount(active.getRowCount() + 1);
+            importRepository.save(active);
+        }
+        manual.setLastSyncedAt(LocalDateTime.now());
+        manual.setLastSyncedBy(CurrentUser.usernameOrSystem());
+        manual.setLastSyncDirection(ManualEhrSyncRequest.Direction.TO_IMPORT.name());
+        manualRepository.save(manual);
+    }
+
     /** Manual rows are the governed overlay consulted before the active imported row. */
     @Transactional(readOnly = true)
     public EhrVerificationRecord effectiveRecord(Long activeImportId, String ehrNumber) {
@@ -114,7 +152,6 @@ public class ManualEhrRecordService {
         if (dob.isAfter(LocalDate.now()) || dob.getYear() < 1900) throw new IllegalArgumentException("Enter a plausible date of birth.");
         String phone = EhrImportService.normalisePhone(request.phoneNumber());
         String email = normaliseEmail(request.email());
-        if (phone == null && email == null) throw new IllegalArgumentException("Enter a valid phone number or email address for verification.");
         row.setEhrNumber(request.ehrNumber().trim());
         row.setFullName(request.fullName().trim().replaceAll("\\s+", " "));
         row.setDateOfBirthHash(Tokens.hash(dob.toString()));

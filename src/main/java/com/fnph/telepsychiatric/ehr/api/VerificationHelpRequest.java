@@ -28,14 +28,12 @@ public record VerificationHelpRequest(
         @Schema(example = "Ngozi Okonkwo", requiredMode = Schema.RequiredMode.REQUIRED)
         String fullName,
 
-        @NotNull(message = "Enter your date of birth")
         @Past
-        @Schema(example = "1988-04-12", requiredMode = Schema.RequiredMode.REQUIRED)
+        @Schema(example = "1988-04-12", nullable = true)
         LocalDate dateOfBirth,
 
-        @NotBlank(message = "Enter a phone number we can reach you on")
         @Size(max = 20)
-        @Schema(example = "+2348012345678", requiredMode = Schema.RequiredMode.REQUIRED)
+        @Schema(example = "+2348012345678", nullable = true)
         String phoneNumber,
 
         @Email
