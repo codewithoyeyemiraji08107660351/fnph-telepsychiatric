@@ -356,6 +356,19 @@ public class ManualEhrRecordService {
         }
     }
 
+    /**
+     * Copies the active imported snapshot row onto a manual override
+     * (the FROM_IMPORT sync direction).
+     *
+     * isActiveRecord is intentionally NOT copied here: a manual record
+     * exists to override eligibility decisions the CSV snapshot got wrong
+     * or hasn't caught up on yet. Syncing FROM_IMPORT refreshes
+     * demographic data (name, DOB, contact, clinic, patient status)
+     * without silently reverting an admin's active/inactive call — that
+     * call is what enrolment's effectiveRecord() actually checks, so
+     * overwriting it here previously caused admin-approved patients to
+     * fail lookup with a generic "could not match" error.
+     */
     private void copy(
             EhrVerificationRecord from,
             ManualEhrRecord to) {
@@ -420,38 +433,83 @@ public class ManualEhrRecordService {
         to.setPatientStatus(
                 from.getPatientStatus());
 
+        // isActiveRecord intentionally NOT copied — see method javadoc above.
+    }
+
+    /**
+     * Copies a manual override onto the active imported snapshot row
+     * (the TO_IMPORT sync direction).
+     *
+     * isActiveRecord IS copied here, on purpose: in this direction the
+     * manual record is the source of truth being pushed outward, so its
+     * eligibility decision should win.
+     */
+    private void copy(
+            ManualEhrRecord from,
+            EhrVerificationRecord to) {
+
+        /*
+         * Always keep the EHR number normalized when synchronizing
+         * a manual record into the active imported snapshot.
+         */
+        to.setEhrNumber(
+                normalizeEhrNumber(
+                        from.getEhrNumber()));
+
+        to.setFullName(
+                from.getFullName());
+
+        to.setDateOfBirthHash(
+                from.getDateOfBirthHash());
+
+        to.setDateOfBirthMasked(
+                from.getDateOfBirthMasked());
+
+        to.setDateOfBirthEncrypted(
+                from.getDateOfBirthEncrypted());
+
+        to.setPhoneHash(
+                from.getPhoneHash());
+
+        to.setPhoneMasked(
+                from.getPhoneMasked());
+
+        to.setPhoneEncrypted(
+                from.getPhoneEncrypted());
+
+        to.setEmailHash(
+                from.getEmailHash());
+
+        to.setEmailMasked(
+                from.getEmailMasked());
+
+        to.setEmailEncrypted(
+                from.getEmailEncrypted());
+
+        to.setClinic(
+                from.getClinic());
+
+        to.setPatientStatus(
+                from.getPatientStatus());
+
         to.setIsActiveRecord(
                 from.getIsActiveRecord());
     }
 
-  private void copy(EhrVerificationRecord from, ManualEhrRecord to) {
-    String existingPhoneHash = to.getPhoneHash();
-    String existingPhoneEncrypted = to.getPhoneEncrypted();
+    private EhrVerificationRecord asVerificationRecord(
+            ManualEhrRecord manual) {
 
-    to.setEhrNumber(normalizeEhrNumber(from.getEhrNumber()));
-    to.setFullName(from.getFullName());
-    to.setDateOfBirthHash(from.getDateOfBirthHash());
-    to.setDateOfBirthMasked(from.getDateOfBirthMasked());
-    to.setDateOfBirthEncrypted(from.getDateOfBirthEncrypted());
-    to.setPhoneHash(from.getPhoneHash());
-    to.setPhoneMasked(from.getPhoneMasked());
-    to.setPhoneEncrypted(
-            from.getPhoneEncrypted() != null
-                    ? from.getPhoneEncrypted()
-                    : Objects.equals(existingPhoneHash, from.getPhoneHash())
-                            ? existingPhoneEncrypted
-                            : null);
-    to.setEmailHash(from.getEmailHash());
-    to.setEmailMasked(from.getEmailMasked());
-    to.setEmailEncrypted(from.getEmailEncrypted());
-    to.setClinic(from.getClinic());
-    to.setPatientStatus(from.getPatientStatus());
+        EhrVerificationRecord record =
+                new EhrVerificationRecord();
 
-    // isActiveRecord intentionally NOT copied here: a manual record exists to
-    // override eligibility decisions the CSV snapshot got wrong or hasn't
-    // caught up on yet. Syncing FROM_IMPORT should refresh demographic data
-    // without silently reverting an admin's active/inactive call.
-}
+        record.setEhrNumber(
+                normalizeEhrNumber(
+                        manual.getEhrNumber()));
+
+        copy(manual, record);
+
+        return record;
+    }
 
     private ManualEhrRecordResponse currentResponse(
             ManualEhrRecord row) {
