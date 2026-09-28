@@ -11,7 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-
+import java.time.temporal.ChronoUnit;
 import java.time.LocalDateTime;
 
 /**
@@ -77,7 +77,7 @@ public class AuditService {
             entry.setUserAgent(event.userAgent());
             entry.setBeforeHash(event.beforeState() == null ? null : Tokens.hash(event.beforeState()));
             entry.setAfterHash(event.afterState() == null ? null : Tokens.hash(event.afterState()));
-            entry.setPerformedAt(LocalDateTime.now());
+            entry.setPerformedAt(LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS));
             entry.setIsSystem(CurrentUser.get().isEmpty());
             entry.setCentreId(TenantContext.current().centreId());
 
