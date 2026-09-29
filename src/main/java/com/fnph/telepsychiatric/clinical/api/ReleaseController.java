@@ -16,14 +16,29 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/**
+ * Class-level {@code @Transactional(readOnly = true)} keeps one Hibernate
+ * session open for the whole request. Without it, each repository call below
+ * opened and closed its own session, and every lazy association accessed
+ * afterwards (ReleaseBundle.appointment, ReleaseBundle.components,
+ * Prescription.items, Investigation.items) threw
+ * LazyInitializationException, surfaced to the client as a bare 500 on
+ * every read of the release desk and individual bundles.
+ *
+ * release() and block() override the class default with a writable
+ * @Transactional, since they call through to ReleaseService for the actual
+ * mutation.
+ */
 @RestController
 @RequestMapping("/api/v1/hub/releases")
 @RequiredArgsConstructor
 @Tag(name = "Clinical Bundle Release")
+@Transactional(readOnly = true)
 public class ReleaseController {
 
     private final ReleaseBundleRepository bundleRepository;
@@ -172,6 +187,7 @@ public class ReleaseController {
     }
 
     @PostMapping("/{bundlePublicId}/release")
+    @Transactional
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).RELEASE_BUNDLE_RELEASE)")
     @Operation(
             summary = "Release the complete bundle to the patient",
@@ -229,6 +245,7 @@ public class ReleaseController {
     }
 
     @PostMapping("/{bundlePublicId}/block")
+    @Transactional
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).RELEASE_BUNDLE_RELEASE)")
     @Operation(
             summary = "Hold a bundle",

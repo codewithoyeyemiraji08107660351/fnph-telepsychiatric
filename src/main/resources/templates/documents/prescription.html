@@ -32,11 +32,21 @@
         .qr span { font-size: 7pt; display: block; margin-top: 2pt; }
         .expiry { font-weight: bold; }
         .notice { margin-top: 10pt; font-size: 9pt; }
+        .logo { float: left; width: 22mm; margin-right: 6pt; }
+        .logo img { width: 100%; height: auto; }
+        .signature { margin-top: 24pt; text-align: right; }
+        .signature img { max-width: 50mm; height: auto; }
+        .signature .name { font-size: 11pt; font-weight: bold; margin-top: 2pt; }
+        .signature .role { font-size: 9pt; color: #333; }
+        .clearfix::after { content: ""; display: table; clear: both; }
     </style>
 </head>
 <body>
 
-<div class="header">
+<div class="header clearfix">
+    <div class="logo">
+        <img th:src="@{/images/fnph-logo.png}" alt="FNPK Logo"/>
+    </div>
     <div class="hospital">Federal Neuropsychiatric Hospital, Kaduna</div>
     <div class="unit">Telepsychiatry Service</div>
 </div>
@@ -89,6 +99,12 @@
 <div class="notice">
     This prescription has been transcribed and professionally verified by the
     hospital pharmacy before release.
+</div>
+
+<div class="signature">
+    <img th:src="@{/images/WhatsApp Image 2026-09-29 at 21.12.55.jpeg}" alt="Signature"/>
+    <div class="name">Dr. Muhammad Gidado Ibrahim</div>
+    <div class="role">Consultant Psychiatrist</div>
 </div>
 
 <div class="footer">
