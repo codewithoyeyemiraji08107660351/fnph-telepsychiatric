@@ -54,9 +54,11 @@ public class DocumentController {
                         .stream().map(this::toResponse).toList());
     }
 
-    @GetMapping(value = "/api/v1/documents/{documentPublicId}/file",
-            produces = MediaType.APPLICATION_PDF_VALUE)
-    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).DOCUMENT_DOWNLOAD)")
+   @GetMapping(
+        value = "/api/v1/documents/{documentPublicId}/file",
+        produces = MediaType.APPLICATION_PDF_VALUE
+)
+        @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).DOCUMENT_DOWNLOAD)")
     @Operation(
             summary = "Download the document file",
             description = """
@@ -82,20 +84,25 @@ public class DocumentController {
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     public ResponseEntity<InputStreamResource> file(
-            @PathVariable String documentPublicId, HttpServletRequest http) {
+        @PathVariable String documentPublicId,
+        HttpServletRequest http) {
 
-        IssuedDocument claimed = documentService.claimDownload(
-                documentPublicId, clientIp(http), http.getHeader("User-Agent"));
+    IssuedDocument claimed = documentService.claimDownload(
+            documentPublicId,
+            clientIp(http),
+            http.getHeader("User-Agent"));
 
-        IssuedDocumentService.RenderedFile rendered = documentService.openRendered(claimed);
+    IssuedDocumentService.RenderedFile rendered =
+            documentService.openRendered(claimed);
 
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_PDF)
-                .contentLength(rendered.sizeBytes())
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" + rendered.filename() + "\"")
-                .body(new InputStreamResource(rendered.stream()));
-    }
+    return ResponseEntity.ok()
+            .contentType(MediaType.APPLICATION_PDF)
+            .contentLength(rendered.sizeBytes())
+            .header(
+                    HttpHeaders.CONTENT_DISPOSITION,
+                    "attachment; filename=\"" + rendered.filename() + "\"")
+            .body(new InputStreamResource(rendered.stream()));
+}
 
     @PostMapping("/api/v1/documents/{documentPublicId}/download")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).DOCUMENT_DOWNLOAD)")
@@ -134,7 +141,10 @@ public class DocumentController {
                 documentPublicId, clientIp(http), http.getHeader("User-Agent"))));
     }
 
-    @GetMapping(value = "/api/v1/documents/{documentPublicId}/qr", produces = MediaType.IMAGE_PNG_VALUE)
+   @GetMapping(
+        value = "/api/v1/documents/{documentPublicId}/qr",
+        produces = MediaType.IMAGE_PNG_VALUE
+)
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).DOCUMENT_READ_OWN)")
     @Operation(
             summary = "QR code for a document",

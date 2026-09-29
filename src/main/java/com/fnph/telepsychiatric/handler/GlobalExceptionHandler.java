@@ -34,7 +34,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
-
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -292,6 +292,28 @@ public class GlobalExceptionHandler {
                                 .build()
                 );
     }
+
+        @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+        public ResponseEntity<ErrorResponse> handleNotAcceptable(
+                HttpMediaTypeNotAcceptableException ex,
+        HttpServletRequest request) {
+
+    log.warn(
+            "Not acceptable response format for {}: {}",
+            request.getRequestURI(),
+            ex.getMessage()
+    );
+
+    return ResponseEntity
+            .status(HttpStatus.NOT_ACCEPTABLE)
+            .body(ErrorResponse.builder()
+                    .timestamp(LocalDateTime.now())
+                    .status(HttpStatus.NOT_ACCEPTABLE.value())
+                    .error("Not Acceptable")
+                    .message("The requested response format is not supported.")
+                    .path(request.getRequestURI())
+                    .build());
+}
 
     private String getPath() {
         // In a real implementation, you would get the current request path
