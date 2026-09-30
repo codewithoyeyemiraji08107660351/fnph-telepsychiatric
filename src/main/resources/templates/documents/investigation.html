@@ -6,9 +6,37 @@
     <style>
         @page { size: A4; margin: 18mm 16mm; }
         body { font-family: sans-serif; font-size: 11pt; color: #000; line-height: 1.45; }
-        .header { border-bottom: 2pt solid #000; padding-bottom: 6pt; margin-bottom: 12pt; }
+
+        /* Header: logo and hospital name/unit sit on one flex row so they
+           vertically center against each other regardless of the logo's
+           natural aspect ratio, instead of relying on floats. */
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 8pt;
+            border-bottom: 2pt solid #000;
+            padding-bottom: 6pt;
+            margin-bottom: 12pt;
+        }
+        .logo {
+            flex: 0 0 auto;
+            width: 20mm;
+            height: 20mm;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .logo img {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            display: block;
+        }
+        .header-text { flex: 1 1 auto; }
         .hospital { font-size: 15pt; font-weight: bold; }
         .unit { font-size: 10pt; }
+
         .doc-title { font-size: 13pt; font-weight: bold; margin: 10pt 0 4pt; letter-spacing: 1pt; }
         .issue-number { font-size: 13pt; font-weight: bold; letter-spacing: 0.5pt; }
         .meta { width: 100%; margin-bottom: 10pt; }
@@ -19,27 +47,69 @@
             border: 1pt solid #000; padding: 5pt 6pt; text-align: left; font-size: 10pt;
         }
         .footer { margin-top: 16pt; border-top: 1pt solid #000; padding-top: 8pt; font-size: 9pt; }
+
         .qr { float: right; text-align: center; width: 32mm; }
         .qr img { width: 30mm; height: 30mm; }
         .qr span { font-size: 7pt; display: block; margin-top: 2pt; }
         .expiry { font-weight: bold; }
-        .logo { float: left; width: 22mm; margin-right: 6pt; }
-        .logo img { width: 100%; height: auto; }
-        .signature { margin-top: 24pt; text-align: right; }
-        .signature img { max-width: 50mm; height: auto; }
-        .signature .name { font-size: 11pt; font-weight: bold; margin-top: 2pt; }
-        .signature .role { font-size: 9pt; color: #333; }
+
+        /*
+         * Signature block, laid out horizontally: a fixed, wide-but-short
+         * box holds the signature image (capped height, width auto via
+         * object-fit, so a tall/portrait source image is scaled down to
+         * fit a horizontal strip rather than rendered at full height), with
+         * the name and role sitting beside it rather than stacked beneath
+         * a full-size image.
+         */
+        .signature-block {
+            margin-top: 28pt;
+            display: flex;
+            align-items: flex-end;
+            justify-content: flex-end;
+            gap: 10pt;
+        }
+        .signature-image {
+            flex: 0 0 auto;
+            width: 45mm;
+            height: 16mm;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .signature-image img {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+        }
+        .signature-text {
+            flex: 0 0 auto;
+            text-align: right;
+        }
+        .signature-text .name { font-size: 11pt; font-weight: bold; }
+        .signature-text .role { font-size: 9pt; color: #333; }
+        .signature-rule {
+            margin-top: 4pt;
+            border-top: 1pt solid #000;
+            width: 65mm;
+            margin-left: auto;
+        }
+
         .clearfix::after { content: ""; display: table; clear: both; }
     </style>
 </head>
 <body>
 
-<div class="header clearfix">
+<div class="header">
     <div class="logo">
         <img th:src="${logoDataUri}" alt="FNPH Logo"/>
     </div>
-    <div class="hospital">Federal Neuropsychiatric Hospital, Kaduna</div>
-    <div class="unit">Telepsychiatry Service</div>
+    <div class="header-text">
+        <div class="hospital">Federal Neuropsychiatric Hospital, Kaduna</div>
+        <div class="unit">Telepsychiatry Service</div>
+    </div>
 </div>
 
 <div class="qr">
@@ -82,10 +152,15 @@
     </tbody>
 </table>
 
-<div class="signature">
-   <img th:src="${signatureDataUri}" alt="Signature"/>
-    <div class="name">Dr. Muhammad Gidado Ibrahim</div>
-    <div class="role">Consultant Psychiatrist</div>
+<div class="signature-block">
+    <div class="signature-image">
+        <img th:src="${signatureDataUri}" alt="Signature"/>
+    </div>
+    <div class="signature-text">
+        <div class="name">Dr. Muhammad Gidado Ibrahim</div>
+        <div class="role">Consultant Psychiatrist</div>
+        <div class="signature-rule"></div>
+    </div>
 </div>
 
 <div class="footer">
