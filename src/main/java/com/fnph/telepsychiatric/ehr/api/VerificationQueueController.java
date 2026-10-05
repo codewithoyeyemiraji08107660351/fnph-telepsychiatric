@@ -14,11 +14,13 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +33,7 @@ public class VerificationQueueController {
 
     private final PatientVerificationRequestRepository requestRepository;
     private final PatientRepository patientRepository;
+    private final ManualEhrRecordService manualEhrRecordService;
 
     @GetMapping
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).EHR_VERIFICATION_RESOLVE)")
@@ -114,11 +117,14 @@ public class VerificationQueueController {
             description = """
                     Records the outcome and how the person was verified.
 
-                    **Resolving does not create an account.** Once you have confirmed the
-                    patient by other means, the usual route is to include them in the next
-                    EHR snapshot and let them enrol normally. That keeps one path into the
-                    system rather than a manual side door that bypasses corroboration and
-                    contact verification.
+                    **RESOLVED creates or updates the patient's manual EHR record**, so they
+                    can enrol with their EHR number straight away. It does not create the
+                    account: the patient still chooses their own password at enrolment.
+                    Resolving the same request again refreshes that record. REJECTED
+                    changes nothing.
+
+                    If the patient left date of birth blank, pass `dateOfBirth` from the
+                    hospital file, or the request stays open.
 
                     The notes are required and should say **how** the person was verified,
                     not that they were. "Confirmed" tells a later reader nothing.
@@ -127,7 +133,8 @@ public class VerificationQueueController {
                     """)
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Closed."),
-            @ApiResponse(responseCode = "400", description = "No notes given.",
+            @ApiResponse(responseCode = "400", description = "No notes given, or the "
+                    + "request lacks the details a manual EHR record needs.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @Transactional
@@ -139,7 +146,11 @@ public class VerificationQueueController {
                     + "not be substantiated.", required = true)
             @RequestParam String notes,
             @Parameter(description = "The patient record, if one now exists for them.")
-            @RequestParam(required = false) String patientPublicId) {
+            @RequestParam(required = false) String patientPublicId,
+            @Parameter(description = "Date of birth from the hospital file. Needed only "
+                    + "when the patient left it blank on the help form.", example = "1988-04-12")
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateOfBirth) {
 
         if (notes == null || notes.isBlank()) {
             throw new IllegalArgumentException(
@@ -153,6 +164,13 @@ public class VerificationQueueController {
         }
 
         PatientVerificationRequest request = require(requestPublicId);
+
+        // A verified patient must be able to enrol straight away. Done first:
+        // if the record cannot be written, the request is not marked resolved.
+        if (outcome == VerificationRequestStatus.RESOLVED) {
+            manualEhrRecordService.upsertFromVerifiedRequest(request, dateOfBirth, notes);
+        }
+
         request.setStatus(outcome);
         request.setResolutionNotes(notes);
         request.setResolvedAt(LocalDateTime.now());
