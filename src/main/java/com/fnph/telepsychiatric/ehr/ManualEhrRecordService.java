@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -88,8 +89,8 @@ public class ManualEhrRecordService {
 
         if (request.version() == null
                 || !Objects.equals(
-                        row.getVersion(),
-                        request.version())) {
+                row.getVersion(),
+                request.version())) {
 
             throw new IllegalArgumentException(
                     "This record changed after you opened it. "
@@ -226,6 +227,64 @@ public class ManualEhrRecordService {
     }
 
     /**
+     * Called when HIM resolves a verification request as RESOLVED.
+     *
+     * Creates the manual record that patient lookup will match, or refreshes
+     * it when one already exists, so resolving twice is safe and can be used
+     * to backfill requests resolved before this existed. Runs inside the
+     * caller's transaction: if the record cannot be written, the request is
+     * not marked resolved either.
+     */
+    @Transactional
+    public ManualEhrRecordResponse upsertFromVerifiedRequest(
+            PatientVerificationRequest verified,
+            LocalDate dateOfBirthOverride,
+            String resolutionNotes) {
+
+        LocalDate dob = dateOfBirthOverride != null
+                ? dateOfBirthOverride
+                : verified.getDateOfBirth();
+
+        if (dob == null) {
+            throw new IllegalArgumentException(
+                    "This request has no date of birth. Enter it from the hospital "
+                            + "file, then resolve again.");
+        }
+
+        String number =
+                normalizeEhrNumber(verified.getEhrNumberClaimed());
+
+        if (number == null) {
+            throw new IllegalArgumentException(
+                    "This request has no EHR number to verify.");
+        }
+
+        Optional<ManualEhrRecord> existing =
+                manualRepository.findByEhrNumber(number);
+
+        String reason = "Verification request "
+                + verified.getPublicId()
+                + " resolved: "
+                + resolutionNotes.trim();
+
+        ManualEhrRecordRequest request = new ManualEhrRecordRequest(
+                number,
+                verified.getFullName(),
+                dob,
+                verified.getPhoneNumber(),
+                verified.getEmail(),
+                existing.map(ManualEhrRecord::getClinic).orElse(null),
+                existing.map(ManualEhrRecord::getPatientStatus).orElse(null),
+                Boolean.TRUE,
+                reason.length() > 500 ? reason.substring(0, 500) : reason,
+                existing.map(ManualEhrRecord::getVersion).orElse(null));
+
+        return existing.isPresent()
+                ? update(existing.get().getPublicId(), request)
+                : create(request);
+    }
+
+    /**
      * Manual rows are the governed overlay consulted before the active
      * imported row.
      *
@@ -317,8 +376,8 @@ public class ManualEhrRecordService {
                 phone == null
                         ? null
                         : "*******"
-                                + phone.substring(
-                                        phone.length() - 4));
+                        + phone.substring(
+                        phone.length() - 4));
 
         row.setPhoneEncrypted(
                 phone == null
@@ -413,10 +472,10 @@ public class ManualEhrRecordService {
                 from.getPhoneEncrypted() != null
                         ? from.getPhoneEncrypted()
                         : Objects.equals(
-                                existingPhoneHash,
-                                from.getPhoneHash())
-                                ? existingPhoneEncrypted
-                                : null);
+                        existingPhoneHash,
+                        from.getPhoneHash())
+                        ? existingPhoneEncrypted
+                        : null);
 
         to.setEmailHash(
                 from.getEmailHash());
@@ -536,10 +595,10 @@ public class ManualEhrRecordService {
                 !hasActive
                         ? "NO_ACTIVE_IMPORT"
                         : imported == null
-                                ? "MANUAL_ONLY"
-                                : matches(manual, imported)
-                                        ? "MATCHED"
-                                        : "DIFFERENT";
+                        ? "MANUAL_ONLY"
+                        : matches(manual, imported)
+                        ? "MATCHED"
+                        : "DIFFERENT";
 
         return new ManualEhrRecordResponse(
                 manual.getPublicId(),
@@ -573,31 +632,31 @@ public class ManualEhrRecordService {
                 .equals(normalizeEhrNumber(b.getEhrNumber()))
 
                 && a.getFullName()
-                        .equalsIgnoreCase(b.getFullName())
+                .equalsIgnoreCase(b.getFullName())
 
                 && Objects.equals(
-                        a.getDateOfBirthHash(),
-                        b.getDateOfBirthHash())
+                a.getDateOfBirthHash(),
+                b.getDateOfBirthHash())
 
                 && Objects.equals(
-                        a.getPhoneHash(),
-                        b.getPhoneHash())
+                a.getPhoneHash(),
+                b.getPhoneHash())
 
                 && Objects.equals(
-                        a.getEmailHash(),
-                        b.getEmailHash())
+                a.getEmailHash(),
+                b.getEmailHash())
 
                 && Objects.equals(
-                        a.getClinic(),
-                        b.getClinic())
+                a.getClinic(),
+                b.getClinic())
 
                 && Objects.equals(
-                        a.getPatientStatus(),
-                        b.getPatientStatus())
+                a.getPatientStatus(),
+                b.getPatientStatus())
 
                 && Objects.equals(
-                        a.getIsActiveRecord(),
-                        b.getIsActiveRecord());
+                a.getIsActiveRecord(),
+                b.getIsActiveRecord());
     }
 
     private EhrVerificationRecord imported(

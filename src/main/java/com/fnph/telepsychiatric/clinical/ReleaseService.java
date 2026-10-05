@@ -139,8 +139,7 @@ public class ReleaseService {
                 componentRepository.findAllByBundleId(bundleId);
 
         boolean allSettled = components.stream()
-                .filter(c -> Boolean.TRUE.equals(c.getIsRequired()) || c.isSettled())
-                .allMatch(ReleaseBundleComponent::isSettled);
+        .allMatch(ReleaseBundleComponent::isSettled);
 
         BundleStatus status = allSettled ? BundleStatus.READY : BundleStatus.INCOMPLETE;
 

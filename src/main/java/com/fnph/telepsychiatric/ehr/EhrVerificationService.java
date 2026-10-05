@@ -64,6 +64,7 @@ public class EhrVerificationService {
                     + "hospital card, or request help below.";
 
     private final EhrImportRepository importRepository;
+    private final EhrRecordRepository recordRepository;
     private final ManualEhrRecordService manualEhrRecordService;
     private final EhrLookupAttemptRepository attemptRepository;
     private final ContactVerificationRepository contactRepository;
@@ -133,6 +134,15 @@ public class EhrVerificationService {
                     "Enrolment is temporarily unavailable. Please try again later.");
         }
 
+        /*
+         * The card may print leading zeros that the hospital's spreadsheet
+         * export dropped ("0351" on the card, "351" in the snapshot). Resolve
+         * to the number the snapshot actually holds, then use that one for
+         * everything below, so the attempt log, the already-enrolled check,
+         * the setup session and the account all carry the same value.
+         */
+        ehrNumber = canonicalEhrNumber(active.get().getId(), ehrNumber);
+
         EhrVerificationRecord snapshot =
                 manualEhrRecordService.effectiveRecord(
                         active.get().getId(),
@@ -166,7 +176,7 @@ public class EhrVerificationService {
          * Do NOT add DOB, phone, email or any other corroboration here.
          */
 
-        if (patientRepository.existsByEhrNumber(ehrNumber)) {
+        if (patientRepository.existsByEhrNumber(snapshot.getEhrNumber())) {
             record(ehrNumber, LookupOutcome.ALREADY_ENROLLED, ipAddress, userAgent);
 
             throw new EnrolmentException(
@@ -177,7 +187,7 @@ public class EhrVerificationService {
         record(ehrNumber, LookupOutcome.MATCHED, ipAddress, userAgent);
 
         contactRepository.invalidateOutstanding(
-                ehrNumber,
+                snapshot.getEhrNumber(),
                 LocalDateTime.now());
 
         /*
@@ -191,7 +201,11 @@ public class EhrVerificationService {
          */
         ContactVerification verification = new ContactVerification();
 
-        verification.setEhrNumber(ehrNumber);
+        /*
+         * The snapshot's own number, not the typed one, so step two finds the
+         * same record whichever form the patient typed.
+         */
+        verification.setEhrNumber(snapshot.getEhrNumber());
         verification.setChannel(ContactChannel.EMAIL);
         verification.setDeliveryRoute("SELF_SERVICE");
         verification.setDestinationMasked("Not required");
@@ -219,6 +233,39 @@ public class EhrVerificationService {
                 verification.getExpiresAt(),
                 active.get().getSourceAsAt(),
                 active.get().ageInDays());
+    }
+
+    /**
+     * The number as the snapshot stores it.
+     *
+     * The typed number wins whenever it resolves, including through a manual
+     * record. Otherwise a single snapshot row matching once leading zeros are
+     * ignored gives its own number back.
+     *
+     * Several matches mean two patients whose numbers differ only by zeros.
+     * Choosing between them could hand one patient the other's record, so the
+     * typed number is returned unchanged and the lookup fails as normal.
+     */
+    private String canonicalEhrNumber(Long importId, String typed) {
+        if (manualEhrRecordService.effectiveRecord(importId, typed) != null) {
+            return typed;
+        }
+
+        List<EhrVerificationRecord> matches =
+                recordRepository.findMatchingIgnoringLeadingZeros(importId, typed);
+
+        if (matches.size() == 1) {
+            return matches.get(0).getEhrNumber();
+        }
+
+        if (matches.size() > 1) {
+            log.warn(
+                    "A typed EHR number matches {} snapshot rows once leading zeros are "
+                            + "ignored. Only an exact match is accepted for it.",
+                    matches.size());
+        }
+
+        return typed;
     }
 
     // -----------------------------------------------------------------
@@ -250,6 +297,13 @@ public class EhrVerificationService {
             throw new EnrolmentException(
                     "That setup session is invalid. Start again.");
         }
+
+        /*
+         * Lookup stored the snapshot's own number, so this resolves directly.
+         * Sessions created before that change may still hold the typed form,
+         * which this keeps working.
+         */
+        ehrNumber = canonicalEhrNumber(active.getId(), ehrNumber);
 
         EhrVerificationRecord snapshot =
                 manualEhrRecordService.effectiveRecord(
@@ -550,6 +604,10 @@ public class EhrVerificationService {
      * - insert/remove separators.
      *
      * Only surrounding whitespace and letter case are normalized.
+     *
+     * Leading zeros are handled separately, and only as a fallback, in
+     * canonicalEhrNumber: a dropped zero is an export fault, not a licence to
+     * treat two different identifiers as the same one.
      */
     private String normalizeEhrNumber(String value) {
         if (value == null || value.isBlank()) {
