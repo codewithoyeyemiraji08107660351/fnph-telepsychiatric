@@ -45,5 +45,32 @@ public interface EhrRecordRepository
             @Param("importId") Long importId
     );
 
+    /**
+     * Snapshot rows for a number the patient typed: the exact row, plus any
+     * row that matches once leading zeros are ignored on both sides.
+     *
+     * Why this exists: a hospital card prints "0351", but a spreadsheet export
+     * stores the EHR column as a number and drops the zero, so the snapshot
+     * holds "351". The patient types what is on the card and never matches.
+     *
+     * Several rows mean two patients whose numbers differ only by zeros. The
+     * caller refuses to choose between them; it never guesses.
+     */
+    @Query("""
+           select r
+           from EhrVerificationRecord r
+           where r.ehrImport.id = :importId
+             and (
+                    r.ehrNumber = :number
+                    or trim(leading '0' from r.ehrNumber)
+                       = trim(leading '0' from :number)
+             )
+           """)
+    List<EhrVerificationRecord>
+    findMatchingIgnoringLeadingZeros(
+            @Param("importId") Long importId,
+            @Param("number") String number
+    );
+
     long countByEhrImportId(Long importId);
 }
