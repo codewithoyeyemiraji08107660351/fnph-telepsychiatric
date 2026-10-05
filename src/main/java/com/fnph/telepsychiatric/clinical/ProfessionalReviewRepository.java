@@ -40,4 +40,15 @@ public interface ProfessionalReviewRepository extends JpaRepository<Professional
            order by r.submittedToHubAt asc
            """)
     List<ProfessionalReview> findRaisedQueries();
+
+    /** Every review attached to one bundle's prescriptions and investigations. */
+    @Query("""
+           select r from ProfessionalReview r
+           left join fetch r.prescription p
+           left join fetch r.investigation i
+           left join fetch r.reviewer
+           where p.bundle.id = :bundleId or i.bundle.id = :bundleId
+           order by r.assignedAt asc
+           """)
+    List<ProfessionalReview> findAllByBundleId(@Param("bundleId") Long bundleId);
 }

@@ -52,7 +52,16 @@ public record ReleaseBundleResponse(
         String releasedBy,
 
         @Schema(nullable = true)
-        LocalDateTime releasedAt
+        LocalDateTime releasedAt,
+
+        @Schema(
+                description = """
+                        The hospital appointment this bundle belongs to. Keys the hub
+                        oversight endpoints. Null for centre bundles.
+                        """,
+                nullable = true
+        )
+        String appointmentPublicId
 ) {
 
     @Schema(

@@ -83,10 +83,10 @@ public class ReleaseController {
     ) {
         List<BundleStatus> wanted = status == null
                 ? List.of(
-                        BundleStatus.READY,
-                        BundleStatus.INCOMPLETE,
-                        BundleStatus.BLOCKED
-                )
+                BundleStatus.READY,
+                BundleStatus.INCOMPLETE,
+                BundleStatus.BLOCKED
+        )
                 : List.of(status);
 
         return ResponseEntity.ok(
@@ -299,7 +299,10 @@ public class ReleaseController {
                 components,
                 clinicalContent,
                 bundle.getReleasedBy(),
-                bundle.getReleasedAt()
+                bundle.getReleasedAt(),
+                bundle.getAppointment() == null
+                        ? null
+                        : bundle.getAppointment().getPublicId()
         );
     }
 
