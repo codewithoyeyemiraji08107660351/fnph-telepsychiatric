@@ -35,5 +35,7 @@ public enum NotificationType {
 
     PAYMENT_VERIFIED_HIM,
     /** A reserved slot returned to the pool because payment did not complete. */
-    SLOT_HOLD_EXPIRED
+    SLOT_HOLD_EXPIRED,
+    /** The Hub Coordinator edited a review this person submitted. */
+    CLINICAL_RECORD_EDITED
 }

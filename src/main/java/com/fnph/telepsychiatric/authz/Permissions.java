@@ -214,6 +214,11 @@ public final class Permissions {
     public static final String RELEASE_BUNDLE_READ = "release_bundle.read";
     /** Release a complete clinical bundle. */
     public static final String RELEASE_BUNDLE_RELEASE = "release_bundle.release";
+    /**
+     * Edit reviewer notes and follow-up logistics. Never doctor-authored content.
+     * Every edit carries a reason and keeps the previous value.
+     */
+    public static final String HUB_CLINICAL_EDIT = "hub.clinical_edit";
 
     // --- queue -------------------------------------------------------
     /** Work the nursing preparation queue. */

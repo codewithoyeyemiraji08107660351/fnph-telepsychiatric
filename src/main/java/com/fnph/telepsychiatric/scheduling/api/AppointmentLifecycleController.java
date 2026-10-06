@@ -47,6 +47,7 @@ public class AppointmentLifecycleController {
     private final SlotRepository slotRepository;
     private final CancellationRequestRepository cancellationRepository;
     private final AppointmentStatusHistoryRepository historyRepository;
+    private final TeamHistoryService teamHistory;
     private final ConfigurationService configuration;
     private final InAppNotificationService notifications;
 
@@ -303,7 +304,7 @@ public class AppointmentLifecycleController {
         // Patient times only. A centre slot belongs to the centre schedule.
         if (located.getPublication() == null
                 || located.getPublication().getAudience()
-                        != ScheduleAudience.FNPH_PATIENT) {
+                != ScheduleAudience.FNPH_PATIENT) {
             throw new IllegalArgumentException("That time is not open to patients. Choose another.");
         }
         Slot target = slotRepository.findByIdForUpdate(located.getId())
@@ -324,6 +325,7 @@ public class AppointmentLifecycleController {
         appointment.setAppointmentDate(target.getStartAt());
         appointment.setScheduledEndAt(target.getEndAt());
         // Cleared deliberately. Availability is per doctor per window.
+        TeamHistoryService.TeamSnapshot teamBefore = TeamHistoryService.TeamSnapshot.of(appointment);
         appointment.setDoctor(null);
         appointment.setNurse(null);
         appointment.setPharmacist(null);
@@ -336,6 +338,8 @@ public class AppointmentLifecycleController {
         appointmentRepository.save(appointment);
 
         transition(appointment, Status.AWAITING_APPROVAL, "Rescheduled: " + reason);
+        teamHistory.record(appointment, teamBefore,
+                AppointmentTeamEvent.ChangeSource.RESCHEDULE, reason);
 
         notifications.notifyRole("HUB_COORDINATOR", null,
                 NotificationType.BOOKING_AWAITING_APPROVAL,

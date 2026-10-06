@@ -62,4 +62,10 @@ public interface ReleaseBundleRepository extends JpaRepository<ReleaseBundle, Lo
            order by b.createdAt asc
            """)
     List<ReleaseBundle> findFnphDesk(@Param("statuses") Collection<BundleStatus> statuses);
+
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "Hub workflow board: appointmentIds are FNPH appointments, whose bundles "
+                    + "have no centre; reached only through release_bundle.read, which no "
+                    + "centre role holds")
+    List<ReleaseBundle> findAllByAppointmentIdIn(Collection<Long> appointmentIds);
 }

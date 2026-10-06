@@ -62,6 +62,7 @@ public class BookingService {
     private final SlotHoldRepository holdRepository;
     private final AppointmentRepository appointmentRepository;
     private final AppointmentStatusHistoryRepository historyRepository;
+    private final TeamHistoryService teamHistory;
     private final RoomRepository roomRepository;
     private final DoctorAvailabilityRepository availabilityRepository;
     private final PatientCreditService walletService;
@@ -286,6 +287,7 @@ public class BookingService {
 
         LocalDateTime now = LocalDateTime.now();
         String actor = CurrentUser.usernameOrSystem();
+        TeamHistoryService.TeamSnapshot teamBefore = TeamHistoryService.TeamSnapshot.of(appointment);
 
         appointment.setDoctor(assignment.doctor());
         appointment.setNurse(assignment.nurse());
@@ -310,6 +312,8 @@ public class BookingService {
         appointmentRepository.save(appointment);
         recordTransition(appointment, Status.AWAITING_APPROVAL, Status.APPROVED,
                 assignment.notes());
+        teamHistory.record(appointment, teamBefore,
+                AppointmentTeamEvent.ChangeSource.APPROVAL, assignment.notes());
 
         notifyAssignees(appointment);
         notifyPatientApproved(appointment, room);
@@ -372,10 +376,13 @@ public class BookingService {
                     "That doctor is not marked available for the whole of that slot");
         }
 
+        TeamHistoryService.TeamSnapshot teamBefore = TeamHistoryService.TeamSnapshot.of(appointment);
         appointment.setDoctor(doctor);
         appointmentRepository.save(appointment);
         recordTransition(appointment, appointment.getStatus(), appointment.getStatus(),
                 "Doctor assigned: " + doctor.getUsername());
+        teamHistory.record(appointment, teamBefore,
+                AppointmentTeamEvent.ChangeSource.ASSIGNMENT, null);
         return appointment;
     }
 
@@ -409,6 +416,7 @@ public class BookingService {
         }
 
         String previous = appointment.getRoom();
+        TeamHistoryService.TeamSnapshot teamBefore = TeamHistoryService.TeamSnapshot.of(appointment);
         appointment.setAssignedRoom(room);
         appointment.setRoom(room.getCode());
         appointmentRepository.save(appointment);
@@ -416,6 +424,11 @@ public class BookingService {
         recordTransition(appointment, appointment.getStatus(), appointment.getStatus(),
                 "Room %s -> %s%s".formatted(previous, room.getCode(),
                         reason == null ? "" : ": " + reason));
+        teamHistory.record(appointment, teamBefore,
+                appointment.getStatus() == Status.APPROVED
+                        ? AppointmentTeamEvent.ChangeSource.ROOM_CHANGE
+                        : AppointmentTeamEvent.ChangeSource.ASSIGNMENT,
+                reason);
 
         // Only once the appointment is confirmed. Before that nobody has been
         // told a room yet, so there is nothing to correct.
@@ -431,6 +444,7 @@ public class BookingService {
     public Appointment assignTeam(String appointmentPublicId, Users nurse, Users pharmacist,
                                   Users laboratory, Users him) {
         Appointment appointment = requireAssignable(appointmentPublicId);
+        TeamHistoryService.TeamSnapshot teamBefore = TeamHistoryService.TeamSnapshot.of(appointment);
 
         appointment.setNurse(nurse);
         appointment.setPharmacist(pharmacist);
@@ -439,6 +453,8 @@ public class BookingService {
         appointmentRepository.save(appointment);
         recordTransition(appointment, appointment.getStatus(), appointment.getStatus(),
                 "Team assigned");
+        teamHistory.record(appointment, teamBefore,
+                AppointmentTeamEvent.ChangeSource.ASSIGNMENT, null);
         return appointment;
     }
 

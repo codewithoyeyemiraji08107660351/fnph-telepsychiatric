@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Collection;
 
 public interface AppointmentRepository extends JpaRepository<Appointment, Long> {
 
@@ -68,4 +69,25 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
     List<Appointment> findDoctorDay(@Param("doctorId") Long doctorId,
                                     @Param("from") LocalDateTime from,
                                     @Param("to") LocalDateTime to);
+
+    /**
+     * The Hub Coordinator's workflow board for a date window, with the team
+     * fetched in the same query so the board costs one round trip.
+     */
+    @Query("""
+           select a from Appointment a
+           left join fetch a.patient
+           left join fetch a.doctor
+           left join fetch a.nurse
+           left join fetch a.pharmacist
+           left join fetch a.laboratoryTechnician
+           left join fetch a.himOfficer
+           left join fetch a.assignedRoom
+           where a.appointmentDate >= :from and a.appointmentDate < :to
+             and a.status not in :excluded
+           order by a.appointmentDate desc
+           """)
+    List<Appointment> findHubWorkflow(@Param("from") LocalDateTime from,
+                                      @Param("to") LocalDateTime to,
+                                      @Param("excluded") Collection<Status> excluded);
 }

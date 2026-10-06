@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Collection;
 
 /**
  * Follow-up recommendations, for both pathways.
@@ -36,4 +37,9 @@ public interface FollowUpRepository extends JpaRepository<FollowUp, Long> {
             detail = "bundleId comes from a ReleaseBundle resolved by the releasing hospital "
                     + "principal in ReleaseService")
     List<FollowUp> findAllByBundleId(Long bundleId);
+
+    @UnscopedQuery(value = UnscopedQuery.Reason.KEYED_BY_SCOPED_PARENT,
+            detail = "bundleIds come from findAllByAppointmentIdIn on the hub workflow board, "
+                    + "which only resolves FNPH bundles")
+    List<FollowUp> findAllByBundleIdIn(Collection<Long> bundleIds);
 }
