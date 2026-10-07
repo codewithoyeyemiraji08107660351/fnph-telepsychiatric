@@ -121,19 +121,26 @@ public class HubWorkflowService {
     }
 
     /**
-     * @param from  first hospital-local day, inclusive
-     * @param to    last hospital-local day, inclusive
-     * @param stage optional filter; counts are always for the whole window
-     * @param query optional reference, EHR number or patient name fragment
+     * @param from         first hospital-local day, inclusive
+     * @param to           last hospital-local day, inclusive
+     * @param stage        optional filter; counts are always for the whole window
+     * @param query        optional reference, EHR number or patient name fragment
+     * @param soonestFirst true for an upcoming list (ascending by date); the board
+     *                     default is newest first
      */
     public Board board(LocalDate from, LocalDate to, WorkflowStage stage, String query,
-                       int page, int size) {
+                       boolean soonestFirst, int page, int size) {
         requireWindow(from, to);
 
         List<Appointment> appointments = appointmentRepository.findHubWorkflow(
                 HospitalClock.toUtc(from, LocalTime.MIDNIGHT),
                 HospitalClock.toUtc(to.plusDays(1), LocalTime.MIDNIGHT),
                 NOT_ON_BOARD);
+
+        // The query returns newest first; an upcoming list wants soonest first.
+        if (soonestFirst) {
+            appointments = appointments.reversed();
+        }
 
         String needle = query == null || query.isBlank() ? null : query.trim().toLowerCase();
         if (needle != null) {

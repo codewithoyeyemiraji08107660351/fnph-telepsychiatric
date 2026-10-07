@@ -90,4 +90,12 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
     List<Appointment> findHubWorkflow(@Param("from") LocalDateTime from,
                                       @Param("to") LocalDateTime to,
                                       @Param("excluded") Collection<Status> excluded);
+
+    /** Names the consultations on one page of the hub activity feed, in one query. */
+    @Query("""
+           select a from Appointment a
+           left join fetch a.patient
+           where a.id in :ids
+           """)
+    List<Appointment> findWithPatientByIdIn(@Param("ids") Collection<Long> ids);
 }
