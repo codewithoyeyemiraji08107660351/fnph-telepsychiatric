@@ -1,5 +1,7 @@
 package com.fnph.telepsychiatric.authz;
 
+import com.fnph.telepsychiatric.audit.AuditAction;
+import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.authz.api.*;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import com.fnph.telepsychiatric.user.UserRepository;
@@ -23,6 +25,7 @@ public class RoleService {
     private final PermissionRepository permissionRepository;
     private final UserRoleRepository userRoleRepository;
     private final UserRepository userRepository;
+    private final AuditService auditService;
 
     @Transactional(readOnly = true)
     public List<RoleSummaryResponse> listRoles(RoleScope scope) {
@@ -141,6 +144,10 @@ public class RoleService {
         String actor = CurrentUser.usernameOrSystem();
         LocalDateTime now = LocalDateTime.now();
 
+        // A projection, so nothing is loaded into the persistence context that
+        // the bulk delete below would leave stale.
+        List<String> before = userRoleRepository.findRoleCodesByUserId(user.getId());
+
         // Delete then insert, flushed in between, because the single-primary
         // unique index would otherwise reject the new primary while the old one
         // is still present.
@@ -151,6 +158,13 @@ public class RoleService {
             UserRole ur = new UserRole();
             ur.setUserId(user.getId());
             ur.setRoleId(role.getId());
+            // The associations are read-only mappings of the same columns, so
+            // setting the ids alone persists the row but leaves user and role
+            // null on the managed instance. buildAssignmentResponse then read
+            // that same instance back and threw a NullPointerException on
+            // getRole(), rolling the whole change back as a bare 500.
+            ur.setUser(user);
+            ur.setRole(role);
             ur.setIsPrimary(role.getCode().equals(request.primaryRoleCode()));
             ur.setGrantedAt(now);
             ur.setGrantedBy(actor);
@@ -160,6 +174,15 @@ public class RoleService {
 
         userRoleRepository.saveAll(assignments);
         userRoleRepository.flush();
+
+        auditService.record(AuditService.AuditEvent.builder()
+                .action(AuditAction.ROLES_ASSIGNED)
+                .entityType("Users")
+                .entityId(user.getId())
+                .details("Roles changed from " + before + " to " + request.roleCodes()
+                        + " (primary " + request.primaryRoleCode() + ")")
+                .reason(request.reason())
+                .build());
 
         log.info("Roles for user {} set to {} (primary {}) by {}: {}",
                 user.getPublicId(), request.roleCodes(), request.primaryRoleCode(), actor, request.reason());
