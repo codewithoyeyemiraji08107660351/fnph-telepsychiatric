@@ -287,6 +287,7 @@ public class HubActivityService {
             case "APPROVAL" -> "Team set at approval";
             case "ROOM_CHANGE" -> "Room moved";
             case "RESCHEDULE" -> "Team cleared by reschedule";
+            case "REASSIGNMENT" -> "Team member reassigned";
             default -> "Team assigned";
         };
     }

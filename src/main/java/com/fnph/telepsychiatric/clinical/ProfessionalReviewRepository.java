@@ -66,4 +66,20 @@ public interface ProfessionalReviewRepository extends JpaRepository<Professional
            where pb.id in :bundleIds or ib.id in :bundleIds
            """)
     List<ReviewDigest> findDigestsByBundleIds(@Param("bundleIds") Collection<Long> bundleIds);
+
+    /**
+     * What the release desk needs to show per bundle: reviews still waiting,
+     * and submitted ones that raised a concern. Reviewer fetched for the name.
+     * Callers drop reviews of superseded or revoked documents.
+     */
+    @Query("""
+           select r from ProfessionalReview r
+           left join fetch r.prescription p
+           left join fetch r.investigation i
+           left join fetch r.reviewer
+           where (p.bundle.id in :bundleIds or i.bundle.id in :bundleIds)
+             and (r.submittedAt is null or r.queryRaised = true)
+           order by r.assignedAt asc
+           """)
+    List<ProfessionalReview> findDeskReviews(@Param("bundleIds") Collection<Long> bundleIds);
 }

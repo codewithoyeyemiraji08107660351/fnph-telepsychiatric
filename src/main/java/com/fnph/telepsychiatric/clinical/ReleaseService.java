@@ -94,6 +94,31 @@ public class ReleaseService {
     }
 
     /**
+     * Puts a component back to waiting, because new work for it has arrived.
+     *
+     * A doctor who issues a second prescription after the first was reviewed
+     * has made the prescription component unfinished again. Without this the
+     * bundle stayed READY and could be released with the new prescription
+     * still unreviewed. A RELEASED or BLOCKED bundle keeps its state; the
+     * recompute leaves those alone.
+     */
+    @Transactional
+    public void markComponentPending(ReleaseBundle bundle, ComponentType type) {
+        if (bundle == null) {
+            return;
+        }
+        componentRepository.findByBundleIdAndComponentType(bundle.getId(), type)
+                .ifPresent(component -> {
+                    component.setIsComplete(false);
+                    component.setIsRequired(true);
+                    component.setNotRequired(false);
+                    component.setNotRequiredReason(null);
+                    componentRepository.save(component);
+                });
+        recomputeStatus(bundle.getId());
+    }
+
+    /**
      * Records that the doctor decided a component is not needed.
      *
      * A reason is required. "No prescription" with no explanation is
@@ -139,7 +164,7 @@ public class ReleaseService {
                 componentRepository.findAllByBundleId(bundleId);
 
         boolean allSettled = components.stream()
-        .allMatch(ReleaseBundleComponent::isSettled);
+                .allMatch(ReleaseBundleComponent::isSettled);
 
         BundleStatus status = allSettled ? BundleStatus.READY : BundleStatus.INCOMPLETE;
 

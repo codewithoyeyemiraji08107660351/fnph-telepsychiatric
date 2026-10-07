@@ -98,4 +98,22 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
            where a.id in :ids
            """)
     List<Appointment> findWithPatientByIdIn(@Param("ids") Collection<Long> ids);
+
+    /**
+     * Whether a doctor already holds another approved or running consultation
+     * that overlaps the given window. Used before moving a consultation to them.
+     */
+    @Query("""
+           select count(a) > 0 from Appointment a
+           where a.doctor.id = :doctorId
+             and a.id <> :excludeId
+             and a.status in (com.fnph.telepsychiatric.appointment.Status.APPROVED,
+                              com.fnph.telepsychiatric.appointment.Status.IN_PROGRESS)
+             and a.appointmentDate < :end
+             and a.scheduledEndAt > :start
+           """)
+    boolean doctorBusy(@Param("doctorId") Long doctorId,
+                       @Param("excludeId") Long excludeId,
+                       @Param("start") LocalDateTime start,
+                       @Param("end") LocalDateTime end);
 }

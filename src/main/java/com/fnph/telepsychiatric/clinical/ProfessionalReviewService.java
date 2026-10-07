@@ -12,7 +12,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Pharmacy and laboratory review.
@@ -63,7 +65,12 @@ public class ProfessionalReviewService {
         review.setAssignedAt(LocalDateTime.now());
         ProfessionalReview saved = reviewRepository.save(review);
 
-        if (pharmacist != null) {
+        // New work for the component: a bundle that was READY is not any more.
+        releaseService.markComponentPending(prescription.getBundle(), ComponentType.PRESCRIPTION);
+
+        if (pharmacist == null) {
+            alertUnassigned(ReviewType.PHARMACY, saved, prescription.getBundle());
+        } else {
             notifications.notifyUser(pharmacist, NotificationType.PRESCRIPTION_RELEASED,
                     "A prescription is ready for your review",
                     "A prescription from a consultation you were assigned to is waiting for "
@@ -82,7 +89,11 @@ public class ProfessionalReviewService {
         review.setAssignedAt(LocalDateTime.now());
         ProfessionalReview saved = reviewRepository.save(review);
 
-        if (technician != null) {
+        releaseService.markComponentPending(investigation.getBundle(), ComponentType.INVESTIGATION);
+
+        if (technician == null) {
+            alertUnassigned(ReviewType.LABORATORY, saved, investigation.getBundle());
+        } else {
             notifications.notifyUser(technician, NotificationType.INVESTIGATION_RELEASED,
                     "An investigation request is ready for your review",
                     "An investigation request from a consultation you were assigned to is "
@@ -140,15 +151,21 @@ public class ProfessionalReviewService {
         review.setSubmittedToHubAt(now);
         reviewRepository.save(review);
 
+        // A superseded or revoked document keeps that status. Overwriting it with
+        // REVIEWED would bring a replaced prescription back to life.
         if (review.getPrescription() != null) {
-            review.getPrescription().setStatus(ClinicalDocumentStatus.REVIEWED);
-            releaseService.markComponentComplete(
-                    review.getPrescription().getBundle(), ComponentType.PRESCRIPTION);
+            if (review.getPrescription().getStatus() == ClinicalDocumentStatus.PENDING_REVIEW) {
+                review.getPrescription().setStatus(ClinicalDocumentStatus.REVIEWED);
+            }
+            completeIfAllReviewed(review.getPrescription().getBundle(),
+                    ReviewType.PHARMACY, ComponentType.PRESCRIPTION);
         }
         if (review.getInvestigation() != null) {
-            review.getInvestigation().setStatus(ClinicalDocumentStatus.REVIEWED);
-            releaseService.markComponentComplete(
-                    review.getInvestigation().getBundle(), ComponentType.INVESTIGATION);
+            if (review.getInvestigation().getStatus() == ClinicalDocumentStatus.PENDING_REVIEW) {
+                review.getInvestigation().setStatus(ClinicalDocumentStatus.REVIEWED);
+            }
+            completeIfAllReviewed(review.getInvestigation().getBundle(),
+                    ReviewType.LABORATORY, ComponentType.INVESTIGATION);
         }
 
         notifications.notifyRole("HUB_COORDINATOR", null, NotificationType.SUPPORT_TICKET_UPDATE,
@@ -157,9 +174,9 @@ public class ProfessionalReviewService {
                         : "A review has been completed",
                 outcome == ReviewOutcome.QUERY_RAISED
                         ? "A %s review raised a concern that needs the multidisciplinary team."
-                                .formatted(review.getReviewType().name().toLowerCase())
+                        .formatted(review.getReviewType().name().toLowerCase())
                         : "A %s review is complete and the bundle may be ready to release."
-                                .formatted(review.getReviewType().name().toLowerCase()),
+                        .formatted(review.getReviewType().name().toLowerCase()),
                 "/hub/releases", "ProfessionalReview", review.getId());
 
         auditService.record(AuditService.AuditEvent.builder()
@@ -179,6 +196,140 @@ public class ProfessionalReviewService {
     @Transactional(readOnly = true)
     public List<ProfessionalReview> raisedQueries() {
         return reviewRepository.findRaisedQueries();
+    }
+
+    /**
+     * Moves every unsubmitted review of one kind on a bundle to another
+     * professional, including reviews nobody was assigned to.
+     *
+     * Used by the Hub Coordinator when the pharmacist or laboratory technician
+     * on a consultation changes, or when a review is sitting with someone who
+     * is away. Submitted reviews stay with whoever submitted them: that is the
+     * record of who verified the document. Reviews of superseded or revoked
+     * documents are left alone; there is nothing left to verify.
+     *
+     * @return how many reviews moved
+     */
+    @Transactional
+    public int reassignOpen(Long bundleId, ReviewType type, Users to, String reason) {
+        if (bundleId == null) {
+            return 0;
+        }
+        List<ProfessionalReview> moving = openLive(bundleId, type);
+        LocalDateTime now = LocalDateTime.now();
+        int moved = 0;
+
+        for (ProfessionalReview review : moving) {
+            Users previous = review.getReviewer();
+            if (previous != null && to != null && previous.getId().equals(to.getId())) {
+                continue;
+            }
+            review.setReviewer(to);
+            review.setAssignedAt(now);
+            // The new reviewer has not looked at it yet.
+            review.setOpenedAt(null);
+            reviewRepository.save(review);
+            moved++;
+
+            if (previous != null) {
+                notifications.notifyUser(previous, NotificationType.APPOINTMENT_REASSIGNED,
+                        "A review has been moved to a colleague",
+                        "The Hub Coordinator has moved a " + kind(type)
+                                + " review from your queue to someone else. "
+                                + "You do not need to do anything further on it.",
+                        queueUrl(type), "ProfessionalReview", review.getId());
+            }
+            if (to != null) {
+                notifications.notifyUser(to, type == ReviewType.PHARMACY
+                                ? NotificationType.PRESCRIPTION_RELEASED
+                                : NotificationType.INVESTIGATION_RELEASED,
+                        "A " + kind(type) + " review has been assigned to you",
+                        "The Hub Coordinator has assigned you a " + kind(type)
+                                + " review from a consultation. It is waiting in your queue.",
+                        queueUrl(type), "ProfessionalReview", review.getId());
+            }
+
+            auditService.record(AuditService.AuditEvent.builder()
+                    .action(AuditAction.HUB_REVIEW_REASSIGNED)
+                    .entityType("ProfessionalReview")
+                    .entityId(review.getId())
+                    .details(type + " review moved from "
+                            + (previous == null ? "nobody" : previous.getFullName())
+                            + " to " + (to == null ? "nobody" : to.getFullName()))
+                    .reason(reason)
+                    .build());
+        }
+
+        log.info("{} open {} reviews on bundle {} now with {}",
+                moved, type, bundleId, to == null ? "nobody" : to.getPublicId());
+        return moved;
+    }
+
+    /** Unsubmitted reviews of one kind on a bundle whose document is still live. */
+    @Transactional(readOnly = true)
+    public List<ProfessionalReview> openLive(Long bundleId, ReviewType type) {
+        return reviewRepository.findAllByBundleId(bundleId).stream()
+                .filter(r -> r.getReviewType() == type)
+                .filter(r -> r.getSubmittedAt() == null)
+                .filter(ProfessionalReviewService::isLive)
+                .toList();
+    }
+
+    /**
+     * Whether the review's document still needs verifying. A superseded,
+     * revoked or expired document will never be released, so an open review on
+     * it must not hold the bundle.
+     */
+    public static boolean isLive(ProfessionalReview review) {
+        ClinicalDocumentStatus status = review.getPrescription() != null
+                ? review.getPrescription().getStatus()
+                : review.getInvestigation() != null ? review.getInvestigation().getStatus() : null;
+        return status == null || !DEAD.contains(status);
+    }
+
+    private static final Set<ClinicalDocumentStatus> DEAD = EnumSet.of(
+            ClinicalDocumentStatus.SUPERSEDED,
+            ClinicalDocumentStatus.REVOKED,
+            ClinicalDocumentStatus.EXPIRED);
+
+    /**
+     * Marks the component complete only when every live review of that kind on
+     * the bundle has been submitted.
+     *
+     * Previously the first submitted review completed the whole component, so
+     * a consultation with two prescriptions went READY, and could be released,
+     * while the second was still waiting for the pharmacist.
+     */
+    private void completeIfAllReviewed(ReleaseBundle bundle, ReviewType type, ComponentType component) {
+        if (bundle == null) {
+            return;
+        }
+        if (openLive(bundle.getId(), type).isEmpty()) {
+            releaseService.markComponentComplete(bundle, component);
+        } else {
+            releaseService.markComponentPending(bundle, component);
+        }
+    }
+
+    /** FNPH bundles only: centre bundles have their own coordinators and desk. */
+    private void alertUnassigned(ReviewType type, ProfessionalReview review, ReleaseBundle bundle) {
+        if (bundle == null || bundle.getAppointment() == null) {
+            return;
+        }
+        notifications.notifyRole("HUB_COORDINATOR", null, NotificationType.SUPPORT_TICKET_UPDATE,
+                "A " + kind(type) + " review has nobody assigned",
+                "No " + (type == ReviewType.PHARMACY ? "pharmacist" : "laboratory technician")
+                        + " was on the team for this consultation, so the review is in nobody's "
+                        + "queue. Assign one from the release desk.",
+                "/hub/releases", "ProfessionalReview", review.getId());
+    }
+
+    private static String kind(ReviewType type) {
+        return type == ReviewType.PHARMACY ? "pharmacy" : "laboratory";
+    }
+
+    private static String queueUrl(ReviewType type) {
+        return type == ReviewType.PHARMACY ? "/reviews/pharmacy" : "/reviews/laboratory";
     }
 
     private ProfessionalReview require(String publicId) {

@@ -25,7 +25,7 @@ public class AppointmentTeamEvent extends ImmutableEntity {
 
     public enum TeamRole { DOCTOR, NURSE, PHARMACIST, LABORATORY, HIM, ROOM }
 
-    public enum ChangeSource { APPROVAL, ASSIGNMENT, ROOM_CHANGE, RESCHEDULE, BACKFILL }
+    public enum ChangeSource { APPROVAL, ASSIGNMENT, ROOM_CHANGE, RESCHEDULE, BACKFILL, REASSIGNMENT }
 
     @Column(name = "appointment_id", nullable = false, updatable = false)
     private Long appointmentId;
