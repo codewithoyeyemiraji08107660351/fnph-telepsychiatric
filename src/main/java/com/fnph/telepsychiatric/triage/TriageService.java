@@ -5,6 +5,8 @@ import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.configuration.ConfigurationKeys;
 import com.fnph.telepsychiatric.configuration.ConfigurationService;
+import com.fnph.telepsychiatric.notification.InAppNotificationService;
+import com.fnph.telepsychiatric.notification.NotificationType;
 import com.fnph.telepsychiatric.patient.Patient;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +58,10 @@ public class TriageService {
     private final ConfigurationService configuration;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final InAppNotificationService notifications;
+
+    /** How far back an earlier STOPPED answer still matters when a patient passes. */
+    static final int RECENT_STOP_DAYS = 30;
 
     // -----------------------------------------------------------------
     // Triage
@@ -97,11 +103,23 @@ public class TriageService {
             }
         }
 
+        // Counted before this submission is saved. A patient may answer the
+        // questions again after a stop, and the latest answer decides, but a
+        // pass shortly after a yes to a risk question is something the Hub
+        // Coordinator must see before approving a booking.
+        LocalDateTime now = LocalDateTime.now();
+        long recentStops = patient == null ? 0 : responses
+                .findAllByPatientIdOrderBySubmittedAtDesc(patient.getId()).stream()
+                .filter(r -> "STOPPED".equals(r.getOutcome()))
+                .filter(r -> r.getSubmittedAt() != null
+                        && r.getSubmittedAt().isAfter(now.minusDays(RECENT_STOP_DAYS)))
+                .count();
+
         TriageResponse response = new TriageResponse();
         response.setQuestionSet(set);
         response.setTriageVersion(set.getVersion());
         response.setPatient(patient);
-        response.setSubmittedAt(LocalDateTime.now());
+        response.setSubmittedAt(now);
         response.setIpAddress(ipAddress);
 
         try {
@@ -133,10 +151,40 @@ public class TriageService {
                 .entityType("TriageResponse")
                 .entityId(saved.getId())
                 .details("Triage " + saved.getOutcome()
-                        + (stoppedOn == null ? "" : ": " + stoppedOn.getStopReason()))
+                        + (stoppedOn == null ? "" : ": " + stoppedOn.getStopReason())
+                        + (recentStops > 0
+                        ? " (" + recentStops + " earlier stop(s) in the last "
+                        + RECENT_STOP_DAYS + " days)"
+                        : ""))
                 .build());
 
+        if (stoppedOn == null && recentStops > 0) {
+            alertPassAfterStop(patient, saved, recentStops);
+        }
+
         return saved;
+    }
+
+    /**
+     * Tells the Hub Coordinator that a patient who recently answered yes to a
+     * safety question has now answered no to all of them.
+     *
+     * The patient is not blocked: the service is not built for emergencies,
+     * so a permanent lock only stops someone whose situation has genuinely
+     * changed from ever getting care. But the change of answer is clinically
+     * significant, and a coordinator approving the booking should know about it.
+     * The answers themselves are not put in the notification.
+     */
+    private void alertPassAfterStop(Patient patient, TriageResponse response, long recentStops) {
+        String name = (patient.getFirstName() + " " + patient.getLastName()).trim();
+        notifications.notifyRole("HUB_COORDINATOR", null, NotificationType.SYSTEM_ALERT,
+                "Safety questions passed after an earlier stop",
+                "%s (EHR %s) answered yes to a safety question %d time%s in the last %d days and has now answered no to all of them. Check with the patient before approving a booking."
+                        .formatted(name, patient.getEhrNumber(), recentStops,
+                                recentStops == 1 ? "" : "s", RECENT_STOP_DAYS),
+                "/hub/approvals", "TriageResponse", response.getId());
+        log.warn("Triage passed for patient {} after {} recent stop(s)",
+                patient.getPublicId(), recentStops);
     }
 
     /**
