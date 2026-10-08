@@ -47,6 +47,7 @@ public class ClinicalReadController {
     private final IssuedDocumentRepository documentRepository;
     private final WorkQueueService workQueueService;
     private final VitalsService vitalsService;
+    private final com.fnph.telepsychiatric.upload.FileUploadRepository uploadRepository;
     private final ReleaseBundleRepository releaseBundleRepository;
     private final ReleaseService releaseService;
 
@@ -436,6 +437,11 @@ public class ClinicalReadController {
                     // Promised by this endpoint's description and previously absent.
                     row.put("vitalsRecorded",
                             !vitalsService.forAppointment(a.getId()).isEmpty());
+                    // A patient may send a photo of their readings instead of
+                    // typing them. The nurse transcribes from it, so the queue
+                    // has to say it is there.
+                    row.put("vitalsFiles", uploadRepository.countByReferenceIdAndCategoryAndDeletedFalse(
+                            a.getPublicId(), com.fnph.telepsychiatric.upload.FileCategory.VITALS_EVIDENCE));
                     return row;
                 })
                 .toList();

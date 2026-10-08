@@ -56,7 +56,7 @@ public class Vitals extends BaseEntity {
     @Column(name = "measured_at", nullable = false)
     private LocalDateTime measuredAt;
 
-    @Column(name = "measurement_source", length = 50)
+    @Column(name = "measurement_source", length = 150)
     private String measurementSource;
 
     @Column(name = "is_self_reported", nullable = false)

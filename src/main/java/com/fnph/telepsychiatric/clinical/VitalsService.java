@@ -5,6 +5,9 @@ import com.fnph.telepsychiatric.appointment.AppointmentRepository;
 import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.security.CurrentUser;
+import com.fnph.telepsychiatric.upload.FileCategory;
+import com.fnph.telepsychiatric.upload.FileUpload;
+import com.fnph.telepsychiatric.upload.FileUploadRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,6 +42,7 @@ public class VitalsService {
     private final VitalsRepository vitalsRepository;
     private final AppointmentRepository appointmentRepository;
     private final AuditService auditService;
+    private final FileUploadRepository uploadRepository;
 
     @Transactional
     public Vitals record(String appointmentPublicId, VitalsEntry entry) {
@@ -85,6 +89,91 @@ public class VitalsService {
     }
 
     /**
+     * A nurse entering the readings a patient sent as a photo or PDF.
+     *
+     * The patient took the measurements, so the record stays patient-reported,
+     * but the numbers were read off the file by the nurse, who therefore
+     * vouches for the transcription: it is saved verified, by them. The file
+     * names go into the notes so a clinician can open the original and compare.
+     *
+     * Every source file must be a vitals or laboratory upload attached to this
+     * appointment. A nurse cannot transcribe readings into one patient's record
+     * from another patient's file.
+     */
+    @Transactional
+    public Vitals transcribe(String appointmentPublicId, VitalsEntry entry,
+                             List<String> sourceUploadIds) {
+        Appointment appointment = appointmentRepository.findByPublicId(appointmentPublicId)
+                .orElseThrow(() -> new VitalsException("No such appointment"));
+
+        if (sourceUploadIds == null || sourceUploadIds.isEmpty()) {
+            throw new VitalsException("Choose the file the readings were taken from");
+        }
+        List<FileUpload> sources = sourceUploadIds.stream().distinct().map(id -> {
+            FileUpload file = uploadRepository.findByPublicId(id)
+                    .orElseThrow(() -> new VitalsException("No such file"));
+            if (Boolean.TRUE.equals(file.getDeleted())
+                    || !appointment.getPublicId().equals(file.getReferenceId())
+                    || (file.getCategory() != FileCategory.VITALS_EVIDENCE
+                    && file.getCategory() != FileCategory.LABORATORY_RESULT)) {
+                throw new VitalsException("That file is not attached to this appointment");
+            }
+            return file;
+        }).toList();
+
+        if (entry.systolic() == null || entry.diastolic() == null
+                || entry.heartRate() == null || entry.temperature() == null) {
+            throw new VitalsException(
+                    "Enter at least blood pressure, pulse and temperature. If the file does "
+                            + "not show them, raise an issue instead.");
+        }
+        validate(entry);
+
+        String actor = CurrentUser.usernameOrSystem();
+        LocalDateTime now = LocalDateTime.now();
+        String files = String.join(", ", sources.stream().map(FileUpload::getOriginalFileName).toList());
+
+        Vitals vitals = new Vitals();
+        vitals.setAppointment(appointment);
+        vitals.setPatient(appointment.getPatient());
+        vitals.setBloodPressureSystolic(entry.systolic());
+        vitals.setBloodPressureDiastolic(entry.diastolic());
+        vitals.setHeartRate(entry.heartRate());
+        vitals.setRespiratoryRate(entry.respiratoryRate());
+        vitals.setTemperature(entry.temperature());
+        vitals.setWeightKg(entry.weightKg());
+        vitals.setHeightCm(entry.heightCm());
+        vitals.setBloodOxygen(entry.bloodOxygen());
+        vitals.setBloodGlucose(entry.bloodGlucose());
+        vitals.setMeasuredAt(entry.measuredAt() == null ? now : entry.measuredAt());
+        vitals.setMeasurementSource(entry.measurementSource() == null || entry.measurementSource().isBlank()
+                ? "Patient's uploaded record"
+                : entry.measurementSource().strip());
+        vitals.setNotes(truncate(("Transcribed by " + actor + " from " + files + "."
+                + (entry.notes() == null || entry.notes().isBlank() ? "" : " " + entry.notes().strip())), 1000));
+        vitals.setIsSelfReported(true);
+        vitals.setNurseVerified(true);
+        vitals.setVerifiedAt(now);
+        vitals.setVerifiedBy(actor);
+        vitals.setBmi(deriveBmi(entry.weightKg(), entry.heightCm()));
+
+        Vitals saved = vitalsRepository.save(vitals);
+
+        auditService.record(AuditService.AuditEvent.builder()
+                .action(AuditAction.RECORD_CREATED)
+                .entityType("Vitals")
+                .entityId(saved.getId())
+                .details("Vitals transcribed for appointment " + appointment.getReference()
+                        + " from " + files)
+                .build());
+        return saved;
+    }
+
+    private static String truncate(String value, int max) {
+        return value.length() <= max ? value : value.substring(0, max);
+    }
+
+    /**
      * Nurse verification.
      *
      * A patient-reported reading and a nurse-measured one are different things,
@@ -98,6 +187,8 @@ public class VitalsService {
 
         vitals.setVerifiedAt(LocalDateTime.now());
         vitals.setVerifiedBy(CurrentUser.usernameOrSystem());
+        // The flag existed and was never set, so it always said unverified.
+        vitals.setNurseVerified(true);
         return vitalsRepository.save(vitals);
     }
 

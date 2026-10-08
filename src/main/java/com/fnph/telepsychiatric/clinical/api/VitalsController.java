@@ -78,6 +78,61 @@ public class VitalsController {
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(vitals));
     }
 
+    @PostMapping("/appointments/{appointmentPublicId}/transcribe")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).VITALS_VERIFY)")
+    @Operation(
+            summary = "Enter readings from the patient's uploaded file",
+            description = """
+                    For a patient who sent a photo or PDF of their readings instead of
+                    typing them. The nurse opens the file, reads the values and enters them
+                    here, so the appointment has readings and preparation can be completed.
+
+                    `sourceUploadIds` names the file or files the readings came from. Each
+                    must be a vitals or laboratory upload attached to this appointment.
+                    Their names are written into the notes, so a clinician can open the
+                    original and compare.
+
+                    Saved as patient-reported (the patient took the measurements) and
+                    verified by the nurse who transcribed them. The same plausibility
+                    checks apply as for any other reading. Blood pressure, pulse and
+                    temperature are required.
+
+                    **Requires** `vitals.verify`, held by Nursing.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Recorded and verified.",
+                    content = @Content(schema = @Schema(implementation = VitalsResponse.class))),
+            @ApiResponse(responseCode = "409",
+                    description = "A value is implausible, a required reading is missing, or a "
+                            + "file is not attached to this appointment.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<VitalsResponse> transcribe(
+            @PathVariable String appointmentPublicId,
+            @Valid @RequestBody TranscribeRequest request) {
+
+        VitalsRequest r = request.readings();
+        if (r == null) {
+            throw new IllegalArgumentException("Enter the readings");
+        }
+        Vitals vitals = vitalsService.transcribe(appointmentPublicId,
+                new VitalsService.VitalsEntry(
+                        r.systolic(), r.diastolic(), r.heartRate(), r.respiratoryRate(),
+                        r.temperature(), r.weightKg(), r.heightCm(), r.bloodOxygen(),
+                        r.bloodGlucose(), r.measuredAt(), r.measurementSource(), r.notes()),
+                request.sourceUploadIds());
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(vitals));
+    }
+
+    @Schema(name = "TranscribeVitalsRequest")
+    public record TranscribeRequest(
+            @Schema(description = "The readings as shown on the file.") VitalsRequest readings,
+            @Schema(description = "Public ids of the uploads the readings were read from.")
+            List<String> sourceUploadIds) {
+    }
+
     @PostMapping("/{vitalsPublicId}/verify")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).VITALS_VERIFY)")
     @Operation(

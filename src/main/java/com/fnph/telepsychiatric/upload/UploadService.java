@@ -136,7 +136,7 @@ public class UploadService {
         return patientId != null
                 ? uploadRepository.findAllByPatientIdOrderByUploadedAtDesc(patientId)
                 : uploadRepository.findAllByUploadedByOrderByUploadedAtDesc(
-                        CurrentUser.usernameOrSystem());
+                CurrentUser.usernameOrSystem());
     }
 
     /**
@@ -175,6 +175,13 @@ public class UploadService {
     }
 
     private void assertReadable(FileUpload upload) {
+        // A deleted file is gone for every caller. findAllByReferenceId does
+        // not filter on it, so without this a deleted upload kept appearing
+        // under its appointment and could still be opened.
+        if (Boolean.TRUE.equals(upload.getDeleted())) {
+            throw new UploadException("No such file");
+        }
+
         CurrentUser.get().ifPresent(principal -> {
             if (principal.getPatientId() != null) {
                 if (upload.getPatient() == null

@@ -41,4 +41,9 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
             detail = "Files attached to one appointment or referral; every row is passed "
                     + "through UploadService.assertReadable before it is returned")
     List<FileUpload> findAllByReferenceIdOrderByUploadedAtDesc(String referenceId);
+
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "Count only, for the FNPH nursing queue row: referenceId is the public id "
+                    + "of an appointment the queue already loaded, and no file content leaves")
+    long countByReferenceIdAndCategoryAndDeletedFalse(String referenceId, FileCategory category);
 }
