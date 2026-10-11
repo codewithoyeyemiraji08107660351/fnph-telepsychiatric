@@ -77,13 +77,13 @@ public class EhrVerificationService {
     private final SecretEncryptor secretEncryptor;
     private final AuditService auditService;
 
-    @Value("${application.security.enrolment.max-lookup-failures-per-ip:10}")
+    @Value("${application.security.enrolment.max-lookup-failures-per-ip:100}")
     private int maxFailuresPerIp;
 
-    @Value("${application.security.enrolment.max-lookup-failures-per-number:5}")
+    @Value("${application.security.enrolment.max-lookup-failures-per-number:0}")
     private int maxFailuresPerNumber;
 
-    @Value("${application.security.enrolment.lookup-window-minutes:30}")
+    @Value("${application.security.enrolment.lookup-window-minutes:15}")
     private int windowMinutes;
 
     @Value("${application.security.enrolment.contact-code-minutes:10}")
@@ -118,7 +118,7 @@ public class EhrVerificationService {
         if (isRateLimited(ehrNumber, ipAddress)) {
             record(ehrNumber, LookupOutcome.RATE_LIMITED, ipAddress, userAgent);
             throw new EnrolmentException(
-                    "Too many attempts. Wait 30 minutes, or request help below.");
+                    "Too many attempts from this connection. Please try again shortly, or request help below.");
         }
 
         Optional<EhrVerificationImport> active =
@@ -570,24 +570,35 @@ public class EhrVerificationService {
     // Rate limiting
     // -----------------------------------------------------------------
 
+    /**
+     * Only genuine lookup failures count (wrong number, failed corroboration,
+     * inactive record), so retries while blocked and system faults never
+     * extend a block. A limit of 0 or less is switched off.
+     *
+     * Per-number is off by default: a patient retrying their own number is
+     * never made to wait. Per-address stays as a ceiling against someone
+     * walking the EHR number range, set well above what a person types.
+     */
     private boolean isRateLimited(
             String ehrNumber,
             String ipAddress) {
 
         LocalDateTime since =
                 LocalDateTime.now()
-                        .minusMinutes(windowMinutes);
+                        .minusMinutes(Math.max(1, windowMinutes));
 
-        if (attemptRepository.countRecentFailuresForNumber(
+        if (maxFailuresPerNumber > 0
+                && attemptRepository.countRecentFailuresForNumber(
                 ehrNumber,
                 since) >= maxFailuresPerNumber) {
             return true;
         }
 
-        return ipAddress != null
+        return maxFailuresPerIp > 0
+                && ipAddress != null
                 && attemptRepository.countRecentFailuresForIp(
-                        ipAddress,
-                        since) >= maxFailuresPerIp;
+                ipAddress,
+                since) >= maxFailuresPerIp;
     }
 
     // -----------------------------------------------------------------

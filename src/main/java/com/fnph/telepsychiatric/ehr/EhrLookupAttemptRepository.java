@@ -18,14 +18,18 @@ public interface EhrLookupAttemptRepository extends JpaRepository<EhrLookupAttem
     @Query("""
            select count(a) from EhrLookupAttempt a
            where a.ipAddress = :ip and a.attemptedAt > :since
-             and a.outcome <> com.fnph.telepsychiatric.ehr.LookupOutcome.MATCHED
+             and a.outcome in (com.fnph.telepsychiatric.ehr.LookupOutcome.NOT_FOUND,
+                               com.fnph.telepsychiatric.ehr.LookupOutcome.CORROBORATION_FAILED,
+                               com.fnph.telepsychiatric.ehr.LookupOutcome.RECORD_INACTIVE)
            """)
     long countRecentFailuresForIp(@Param("ip") String ip, @Param("since") LocalDateTime since);
 
     @Query("""
            select count(a) from EhrLookupAttempt a
            where a.ehrNumberAttempted = :ehrNumber and a.attemptedAt > :since
-             and a.outcome <> com.fnph.telepsychiatric.ehr.LookupOutcome.MATCHED
+             and a.outcome in (com.fnph.telepsychiatric.ehr.LookupOutcome.NOT_FOUND,
+                               com.fnph.telepsychiatric.ehr.LookupOutcome.CORROBORATION_FAILED,
+                               com.fnph.telepsychiatric.ehr.LookupOutcome.RECORD_INACTIVE)
            """)
     long countRecentFailuresForNumber(@Param("ehrNumber") String ehrNumber,
                                       @Param("since") LocalDateTime since);

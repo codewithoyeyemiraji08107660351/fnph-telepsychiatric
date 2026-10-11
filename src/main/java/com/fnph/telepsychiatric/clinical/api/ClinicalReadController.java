@@ -98,6 +98,12 @@ public class ClinicalReadController {
                     row.put("recommendation", f.getRecommendation());
                     row.put("reviewInterval", f.getReviewInterval());
                     row.put("preferredDate", f.getPreferredDate());
+                    row.put("preferredTime", f.getPreferredTime());
+                    row.put("expectedTimeframe", f.getExpectedTimeframe());
+                    row.put("consultationMode", f.getConsultationMode());
+                    row.put("status", f.getStatus());
+                    row.put("scheduledDate", f.getScheduledDate());
+                    row.put("completedDate", f.getCompletedDate());
                     row.put("createdAt", f.getCreatedAt());
                     return row;
                 }).toList());

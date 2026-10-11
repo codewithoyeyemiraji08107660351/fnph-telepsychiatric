@@ -157,12 +157,13 @@ application:
       mfa-issuer: FNPH Kaduna Telepsychiatry
 
     enrolment:
-      # Two-way limiting, same reasoning as sign-in. Per-number catches a
-      # patient mistyping; per-address catches someone walking the EHR number
-      # range, which is the attack that needs no account at all.
-      max-lookup-failures-per-number: 5
-      max-lookup-failures-per-ip: 10
-      lookup-window-minutes: 30
+      # Patients are never made to wait for retrying their own number
+      # (per-number 0 = off). Per-address is only an anti-bot ceiling against
+      # someone walking the EHR number range, far above what a person types.
+      # Only real lookup failures count towards it.
+      max-lookup-failures-per-number: 0
+      max-lookup-failures-per-ip: 100
+      lookup-window-minutes: 15
       contact-code-minutes: 10
       max-code-attempts: 5
 
