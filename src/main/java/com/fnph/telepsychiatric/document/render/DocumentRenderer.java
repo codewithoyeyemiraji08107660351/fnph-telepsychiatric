@@ -207,11 +207,36 @@ public class DocumentRenderer {
 
         context.setVariable(
                 "patientName",
-                followUp.getPatient() == null
+                followUp.getPatient() != null
+                        ? followUp.getPatient().getFirstName()
+                        + " "
+                        + followUp.getPatient().getLastName()
+                        : followUp.getCentrePatient() == null
                         ? ""
-                        : followUp.getPatient().getFirstName()
-                                + " "
-                                + followUp.getPatient().getLastName()
+                        : followUp.getCentrePatient().getFirstName()
+                        + " "
+                        + followUp.getCentrePatient().getLastName()
+        );
+
+        context.setVariable(
+                "patientIdentifier",
+                followUp.getPatient() != null
+                        ? followUp.getPatient().getEhrNumber()
+                        : followUp.getCentrePatient() == null
+                        ? null
+                        : followUp.getCentrePatient().getCentrePatientId()
+        );
+
+        // createdAt is stored in UTC; the letter carries the hospital (WAT) date.
+        context.setVariable(
+                "issuedOn",
+                followUp.getCreatedAt() == null
+                        ? null
+                        : followUp.getCreatedAt()
+                        .atOffset(java.time.ZoneOffset.UTC)
+                        .atZoneSameInstant(com.fnph.telepsychiatric.common.HospitalClock.ZONE)
+                        .toLocalDate()
+                        .format(DATE)
         );
 
         return render(
@@ -433,8 +458,8 @@ public class DocumentRenderer {
         return prescription.getCentrePatient() == null
                 ? ""
                 : prescription.getCentrePatient().getFirstName()
-                        + " "
-                        + prescription.getCentrePatient().getLastName();
+                + " "
+                + prescription.getCentrePatient().getLastName();
     }
 
     /**
@@ -451,8 +476,8 @@ public class DocumentRenderer {
         return investigation.getCentrePatient() == null
                 ? ""
                 : investigation.getCentrePatient().getFirstName()
-                        + " "
-                        + investigation.getCentrePatient().getLastName();
+                + " "
+                + investigation.getCentrePatient().getLastName();
     }
 
     /**
@@ -469,7 +494,7 @@ public class DocumentRenderer {
         return prescription.getCentrePatient() == null
                 ? ""
                 : prescription.getCentrePatient()
-                        .getCentrePatientId();
+                .getCentrePatientId();
     }
 
     /**
@@ -486,6 +511,6 @@ public class DocumentRenderer {
         return investigation.getCentrePatient() == null
                 ? ""
                 : investigation.getCentrePatient()
-                        .getCentrePatientId();
+                .getCentrePatientId();
     }
 }

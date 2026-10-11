@@ -4,168 +4,279 @@
     <meta charset="UTF-8"/>
     <title th:text="'Investigation request ' + ${issueNumber}">Investigation request</title>
     <style>
-        @page { size: A4; margin: 18mm 16mm; }
-        body { font-family: sans-serif; font-size: 11pt; color: #000; line-height: 1.45; }
-
-        /* Header: logo and hospital name/unit sit on one flex row so they
-           vertically center against each other regardless of the logo's
-           natural aspect ratio, instead of relying on floats. */
-        .header {
-            display: flex;
-            align-items: center;
-            gap: 8pt;
-            border-bottom: 2pt solid #000;
-            padding-bottom: 6pt;
-            margin-bottom: 12pt;
-        }
-        .logo {
-            flex: 0 0 auto;
-            width: 20mm;
-            height: 20mm;
-            display: flex;
-            align-items: center;
-            justify-content: flex-start;
-        }
-        .logo img {
-            max-width: 100%;
-            max-height: 100%;
-            width: auto;
-            height: auto;
-            display: block;
-        }
-        .header-text { flex: 1 1 auto; }
-        .hospital { font-size: 15pt; font-weight: bold; }
-        .unit { font-size: 10pt; }
-
-        .doc-title { font-size: 13pt; font-weight: bold; margin: 10pt 0 4pt; letter-spacing: 1pt; }
-        .issue-number { font-size: 13pt; font-weight: bold; letter-spacing: 0.5pt; }
-        .meta { width: 100%; margin-bottom: 10pt; }
-        .meta td { padding: 2pt 0; vertical-align: top; font-size: 10pt; }
-        .meta .label { width: 34mm; color: #333; }
-        table.items { width: 100%; border-collapse: collapse; margin-top: 8pt; }
-        table.items th, table.items td {
-            border: 1pt solid #000; padding: 5pt 6pt; text-align: left; font-size: 10pt;
-        }
-        .footer { margin-top: 16pt; border-top: 1pt solid #000; padding-top: 8pt; font-size: 9pt; }
-
-        .qr { float: right; text-align: center; width: 32mm; }
-        .qr img { width: 30mm; height: 30mm; }
-        .qr span { font-size: 7pt; display: block; margin-top: 2pt; }
-        .expiry { font-weight: bold; }
-
         /*
-         * Signature block, laid out horizontally: a fixed, wide-but-short
-         * box holds the signature image (capped height, width auto via
-         * object-fit, so a tall/portrait source image is scaled down to
-         * fit a horizontal strip rather than rendered at full height), with
-         * the name and role sitting beside it rather than stacked beneath
-         * a full-size image.
+         * Rendered by openhtmltopdf (CSS 2.1 plus a little CSS 3). No flexbox,
+         * no grid: layout is tables, which the renderer handles exactly.
+         *
+         * Printed on whatever printer a pharmacy has, photographed on phones
+         * and faxed. So: one deep green for structure, tints light enough to
+         * vanish cleanly, no rule thinner than 0.75pt, and every piece of
+         * meaning carried by text, never by colour alone.
          */
-        .signature-block {
-            margin-top: 28pt;
-            display: flex;
-            align-items: flex-end;
-            justify-content: flex-end;
-            gap: 10pt;
-        }
-        .signature-image {
-            flex: 0 0 auto;
-            width: 45mm;
-            height: 16mm;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-        }
-        .signature-image img {
-            max-width: 100%;
-            max-height: 100%;
-            width: auto;
-            height: auto;
-            object-fit: contain;
-        }
-        .signature-text {
-            flex: 0 0 auto;
-            text-align: right;
-        }
-        .signature-text .name { font-size: 11pt; font-weight: bold; }
-        .signature-text .role { font-size: 9pt; color: #333; }
-        .signature-rule {
-            margin-top: 4pt;
-            border-top: 1pt solid #000;
-            width: 65mm;
-            margin-left: auto;
+        @page { size: A4; margin: 14mm 15mm 16mm 15mm; }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 10pt;
+            line-height: 1.4;
+            color: #1a1a1a;
+            margin: 0;
         }
 
-        .clearfix::after { content: ""; display: table; clear: both; }
+        table { border-collapse: collapse; }
+        td, th { vertical-align: top; }
+
+        /* ---------- Letterhead ---------- */
+        .letterhead { width: 100%; }
+        .letterhead td { vertical-align: middle; }
+        .letterhead .logo-cell { width: 21mm; padding-right: 4mm; }
+        .letterhead .logo-cell img { width: 19mm; height: 19mm; display: block; }
+        .hospital {
+            font-size: 14pt;
+            white-space: nowrap;
+            font-weight: bold;
+            color: #0b4f3a;
+            line-height: 1.15;
+        }
+        .service { font-size: 9.5pt; color: #333333; margin-top: 1.5pt; }
+        .doc-kind-cell { text-align: right; width: 46mm; }
+        .doc-kind {
+            font-size: 8.5pt;
+            color: #555555;
+        }
+        .doc-number {
+            font-size: 13pt;
+            font-weight: bold;
+            color: #111111;
+            margin-top: 1pt;
+        }
+        .rule-main { border-top: 2.25pt solid #0b4f3a; margin-top: 4mm; }
+        .rule-accent { border-top: 0.75pt solid #b8892b; margin-top: 1pt; margin-bottom: 6mm; }
+
+        /* ---------- Title and verification ---------- */
+        .title-row { width: 100%; }
+        .title-row .qr-cell { width: 30mm; text-align: center; }
+        .doc-title {
+            font-size: 20pt;
+            font-weight: bold;
+            color: #0b4f3a;
+            line-height: 1.1;
+            margin: 0;
+        }
+        .doc-subtitle { font-size: 9.5pt; color: #444444; margin-top: 2pt; }
+        .qr-box {
+            border: 0.75pt solid #9aa9a3;
+            padding: 1.5mm;
+        }
+        .qr-box img { width: 25mm; height: 25mm; display: block; margin: 0 auto; }
+        .qr-caption { font-size: 7pt; color: #444444; margin-top: 1mm; }
+
+        /* ---------- Patient details ---------- */
+        .details {
+            width: 100%;
+            margin-top: 5mm;
+            border: 0.75pt solid #9aa9a3;
+            background-color: #f4f8f6;
+        }
+        .details td {
+            width: 25%;
+            padding: 2.2mm 3mm;
+            border-left: 0.75pt solid #d3ddd9;
+        }
+        .details td.first { border-left: 0; }
+        .label {
+            display: block;
+            font-size: 7.5pt;
+            color: #555555;
+            margin-bottom: 0.8mm;
+        }
+        .value { font-size: 10.5pt; font-weight: bold; color: #111111; }
+        .value.plain { font-weight: normal; }
+        .valid-until { color: #0b4f3a; }
+
+        /* ---------- Sections ---------- */
+        .section { margin-top: 6mm; }
+        .section-title {
+            font-size: 10.5pt;
+            font-weight: bold;
+            color: #0b4f3a;
+            padding-bottom: 1.2mm;
+            border-bottom: 0.75pt solid #9aa9a3;
+            margin-bottom: 2mm;
+        }
+        .prose { font-size: 10pt; white-space: pre-line; }
+        .meta-line { font-size: 9.5pt; color: #333333; }
+
+        /* ---------- Item table ---------- */
+        table.items { width: 100%; }
+        table.items th {
+            background-color: #e3ece8;
+            color: #111111;
+            font-size: 8.5pt;
+            font-weight: bold;
+            text-align: left;
+            padding: 2mm 2.5mm;
+            border: 0.75pt solid #7d8f88;
+        }
+        table.items td {
+            padding: 2.2mm 2.5mm;
+            border: 0.75pt solid #7d8f88;
+            font-size: 10pt;
+        }
+        table.items td.num {
+            width: 7mm;
+            text-align: center;
+            color: #444444;
+        }
+        .item-name { font-weight: bold; color: #111111; }
+        .item-note { font-size: 8.5pt; font-style: italic; color: #333333; margin-top: 0.8mm; }
+
+        .notice {
+            margin-top: 4mm;
+            padding: 2.5mm 3mm;
+            border-left: 2.25pt solid #0b4f3a;
+            background-color: #f4f8f6;
+            font-size: 8.5pt;
+            color: #222222;
+        }
+
+        /* ---------- Recommendation (follow-up) ---------- */
+        .recommendation {
+            border: 0.75pt solid #9aa9a3;
+            border-left: 2.25pt solid #0b4f3a;
+            padding: 4mm 4.5mm;
+            font-size: 11pt;
+            line-height: 1.5;
+            white-space: pre-line;
+        }
+
+        /* ---------- Signature ---------- */
+        .signature { width: 100%; margin-top: 10mm; page-break-inside: avoid; }
+        .signature .spacer { width: 55%; }
+        .signature .sign-cell { text-align: left; }
+        .signature img { height: 15mm; width: auto; display: block; }
+        .sign-rule { border-top: 0.75pt solid #1a1a1a; margin-top: 1mm; padding-top: 1.2mm; }
+        .sign-name { font-size: 10.5pt; font-weight: bold; color: #111111; }
+        .sign-role { font-size: 8.5pt; color: #444444; }
+
+        /* ---------- Footer ---------- */
+        .footer {
+            margin-top: 9mm;
+            padding-top: 2.5mm;
+            border-top: 0.75pt solid #9aa9a3;
+            font-size: 8pt;
+            color: #333333;
+            page-break-inside: avoid;
+        }
+        .footer .url { font-weight: bold; color: #111111; }
     </style>
 </head>
 <body>
 
-<div class="header">
-    <div class="logo">
-        <img th:src="${logoDataUri}" alt="FNPH Logo"/>
-    </div>
-    <div class="header-text">
-        <div class="hospital">Federal Neuropsychiatric Hospital, Kaduna</div>
-        <div class="unit">Telepsychiatry Service</div>
-    </div>
-</div>
-
-<div class="qr">
-    <img th:src="${qrDataUri}" alt="Verification code"/>
-    <span>Scan to verify</span>
-</div>
-
-<div class="doc-title">INVESTIGATION REQUEST</div>
-<div class="issue-number" th:text="${issueNumber}">IV-0000-00000000</div>
-
-<table class="meta">
-    <tr><td class="label">Patient</td><td th:text="${patientName}"></td></tr>
-    <tr><td class="label">Record number</td><td th:text="${patientIdentifier}"></td></tr>
-    <tr><td class="label">Issued</td><td th:text="${issuedOn}"></td></tr>
-    <tr th:if="${expiresOn}">
-        <td class="label">Valid until</td>
-        <td class="expiry" th:text="${expiresOn}"></td>
-    </tr>
-</table>
-
-<div th:if="${clinicalInformation}">
-    <strong>Clinical information</strong>
-    <div th:text="${clinicalInformation}"></div>
-</div>
-
-<table class="items">
-    <thead>
+<!-- Letterhead -->
+<table class="letterhead">
     <tr>
-        <th style="width:40%">Investigation</th>
-        <th style="width:15%">Code</th>
-        <th style="width:45%">Notes</th>
+        <td class="logo-cell"><img th:src="${logoDataUri}" alt="FNPH Kaduna logo"/></td>
+        <td>
+            <div class="hospital">Federal Neuropsychiatric Hospital, Kaduna</div>
+            <div class="service">Telepsychiatry Service</div>
+        </td>
+        <td class="doc-kind-cell">
+            <div class="doc-kind">Request number</div>
+            <!-- What a pharmacist reads out on the phone, so it is the most prominent identifier. -->
+            <div class="doc-number" th:text="${issueNumber}">IV-0000-00000000</div>
+        </td>
     </tr>
-    </thead>
-    <tbody>
-    <tr th:each="item : ${items}">
-        <td th:text="${item.panelName}"></td>
-        <td th:text="${item.panelCode}"></td>
-        <td th:text="${item.notes}"></td>
+</table>
+<div class="rule-main"></div>
+<div class="rule-accent"></div>
+
+<!-- Title and verification code -->
+<table class="title-row">
+    <tr>
+        <td>
+            <h1 class="doc-title">Investigation request</h1>
+            <div class="doc-subtitle">Laboratory investigations requested after a telepsychiatry consultation.</div>
+        </td>
+        <td class="qr-cell">
+            <div class="qr-box"><img th:src="${qrDataUri}" alt="Verification code"/></div>
+            <div class="qr-caption">Scan to verify</div>
+        </td>
     </tr>
-    </tbody>
 </table>
 
-<div class="signature-block">
-    <div class="signature-image">
-        <img th:src="${signatureDataUri}" alt="Signature"/>
-    </div>
-    <div class="signature-text">
-        <div class="name">Dr. Muhammad Gidado Ibrahim</div>
-        <div class="role">Consultant Psychiatrist</div>
-        <div class="signature-rule"></div>
+<!-- Patient details -->
+<table class="details">
+    <tr>
+        <td class="first">
+            <span class="label">Patient</span>
+            <span class="value" th:text="${patientName}">Patient name</span>
+        </td>
+        <td>
+            <span class="label">Record number</span>
+            <span class="value" th:text="${patientIdentifier}">000000</span>
+        </td>
+        <td>
+            <span class="label">Issued</span>
+            <span class="value plain" th:text="${issuedOn}">01 Jan 2026</span>
+        </td>
+        <td>
+            <span class="label">Valid until</span>
+            <span class="value valid-until" th:text="${expiresOn} ?: 'Not set'">31 Jan 2026</span>
+        </td>
+    </tr>
+</table>
+
+<div class="section" th:if="${clinicalInformation}">
+    <div class="section-title">Clinical information</div>
+    <div class="prose" th:text="${clinicalInformation}">Clinical information</div>
+</div>
+
+<div class="section">
+    <div class="section-title">Investigations requested</div>
+    <table class="items">
+        <thead>
+        <tr>
+            <th class="num" style="width:7mm">#</th>
+            <th style="width:43%">Investigation</th>
+            <th style="width:15%">Code</th>
+            <th style="width:35%">Notes</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="item, row : ${items}">
+            <td class="num" th:text="${row.count}">1</td>
+            <td><div class="item-name" th:text="${item.panelName}">Full blood count</div></td>
+            <td th:text="${item.panelCode}">FBC</td>
+            <td th:text="${item.notes != 'null' ? item.notes : ''}"></td>
+        </tr>
+        </tbody>
+    </table>
+    <div class="notice">
+        Reviewed by the hospital laboratory before release. Take this request to the
+        laboratory before the validity date.
     </div>
 </div>
 
+<!-- Signature -->
+<table class="signature">
+    <tr>
+        <td class="spacer"></td>
+        <td class="sign-cell">
+            <img th:src="${signatureDataUri}" alt="Signature"/>
+            <div class="sign-rule">
+                <div class="sign-name">Dr. Muhammad Gidado Ibrahim</div>
+                <div class="sign-role">Consultant Psychiatrist</div>
+            </div>
+        </td>
+    </tr>
+</table>
+
+<!-- The URL is printed as well as encoded. A QR code is useless to anyone
+     without a scanner, and a pharmacist with a keyboard is common. -->
 <div class="footer">
-    Verify this document at <span th:text="${verificationUrl}"></span><br/>
-    A copy presented after the validity date will verify as expired.
+    Verify this document at <span class="url" th:text="${verificationUrl}">https://fnphkad.cloud/verify</span>
+    <br/>A copy presented after the validity date will verify as expired.
 </div>
 
 </body>

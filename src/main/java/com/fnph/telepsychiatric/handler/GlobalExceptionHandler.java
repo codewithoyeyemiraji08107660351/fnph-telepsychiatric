@@ -220,7 +220,8 @@ public class GlobalExceptionHandler {
             TriageService.TriageException.class,
             UploadService.UploadException.class,
             CentreBookingService.CentreBookingException.class,
-            CentreWalletService.InsufficientWalletException.class
+            CentreWalletService.InsufficientWalletException.class,
+            com.fnph.telepsychiatric.supervision.ViewAsService.SupervisionException.class
     })
     public ResponseEntity<ErrorResponse> handleDomainRefusal(RuntimeException ex, HttpServletRequest request) {
         log.info("Request refused: {}", ex.getMessage());
@@ -293,27 +294,27 @@ public class GlobalExceptionHandler {
                 );
     }
 
-        @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
-        public ResponseEntity<ErrorResponse> handleNotAcceptable(
-                HttpMediaTypeNotAcceptableException ex,
-        HttpServletRequest request) {
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<ErrorResponse> handleNotAcceptable(
+            HttpMediaTypeNotAcceptableException ex,
+            HttpServletRequest request) {
 
-    log.warn(
-            "Not acceptable response format for {}: {}",
-            request.getRequestURI(),
-            ex.getMessage()
-    );
+        log.warn(
+                "Not acceptable response format for {}: {}",
+                request.getRequestURI(),
+                ex.getMessage()
+        );
 
-    return ResponseEntity
-            .status(HttpStatus.NOT_ACCEPTABLE)
-            .body(ErrorResponse.builder()
-                    .timestamp(LocalDateTime.now())
-                    .status(HttpStatus.NOT_ACCEPTABLE.value())
-                    .error("Not Acceptable")
-                    .message("The requested response format is not supported.")
-                    .path(request.getRequestURI())
-                    .build());
-}
+        return ResponseEntity
+                .status(HttpStatus.NOT_ACCEPTABLE)
+                .body(ErrorResponse.builder()
+                        .timestamp(LocalDateTime.now())
+                        .status(HttpStatus.NOT_ACCEPTABLE.value())
+                        .error("Not Acceptable")
+                        .message("The requested response format is not supported.")
+                        .path(request.getRequestURI())
+                        .build());
+    }
 
     private String getPath() {
         // In a real implementation, you would get the current request path

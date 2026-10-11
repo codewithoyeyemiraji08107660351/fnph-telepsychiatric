@@ -17,6 +17,7 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,10 +40,17 @@ import java.util.List;
  * not altered by anyone else. A supervision feature that can forge clinical
  * authorship is not a supervision feature.
  *
- * Enforcement is the {@code is_mutating} flag on every permission: during
- * supervision the effective authority set is the target's non-mutating
- * permissions only. It is a property of the data, so a permission added later
- * is covered by default, because the default is mutating.
+ * Enforcement happens on every request, in {@link SupervisionContextFilter}:
+ * <ul>
+ *   <li>anything other than GET, HEAD or OPTIONS is refused outright, whatever
+ *       the permissions say;</li>
+ *   <li>the request runs as the viewed account holding only its non-mutating
+ *       permissions (the {@code is_mutating} flag), so method security refuses
+ *       the rest and "my" screens show that account's data;</li>
+ *   <li>the administrator's own permissions do not apply inside the session.</li>
+ * </ul>
+ * The default for a new permission is mutating, so it is excluded until
+ * someone decides otherwise.
  *
  * {@code document.download} is mutating on purpose. It consumes the patient's
  * single allowed download, and an administrator looking at a dashboard must not
@@ -85,13 +93,14 @@ public class ViewAsService {
         // about which one an action belonged to, which defeats the point.
         viewAsRepository.findOpenForAdministrator(administrator.getId(), LocalDateTime.now())
                 .ifPresent(open -> {
-                    throw new IllegalStateException(
+                    throw new SupervisionException(
                             "You already have a supervised session open on another account. "
                                     + "End it before starting another.");
                 });
 
         UserRole primary = userRoleRepository.findByUserIdAndIsPrimaryTrue(target.getId())
-                .orElseThrow(() -> new IllegalStateException("That account has no primary role"));
+                .orElseThrow(() -> new SupervisionException(
+                        "That account has no primary role, so there is no dashboard to open"));
         Role targetRole = primary.getRole();
 
         if (targetRole.getScope() == RoleScope.PATIENT) {
@@ -143,7 +152,7 @@ public class ViewAsService {
 
         SecurityUser principal = CurrentUser.require();
         if (!session.getAdministrator().getId().equals(principal.getUserId())) {
-            throw new IllegalArgumentException("That supervised session belongs to someone else");
+            throw new AccessDeniedException("That supervised session belongs to someone else");
         }
         if (session.getEndedAt() != null) {
             return;
@@ -197,5 +206,12 @@ public class ViewAsService {
                 session.getEndedAt(),
                 session.getActionsPerformed(),
                 permissions);
+    }
+
+    /** A supervised session cannot be opened in the current state. Answered as 409. */
+    public static class SupervisionException extends RuntimeException {
+        public SupervisionException(String message) {
+            super(message);
+        }
     }
 }

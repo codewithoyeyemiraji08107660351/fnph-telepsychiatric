@@ -35,10 +35,17 @@ public final class SupervisionContext {
     }
 
     /**
-     * @param viewAsSessionId the supervised session row
-     * @param targetUserId    the account being acted as
-     * @param targetRoleCode  the role whose dashboard is open
+     * @param viewAsSessionId       the supervised session row
+     * @param targetUserId          the account being viewed
+     * @param targetRoleCode        the role whose dashboard is open
+     * @param administratorUserId   the administrator who authenticated
+     * @param administratorUsername their username, for the audit row
      */
-    public record Snapshot(Long viewAsSessionId, Long targetUserId, String targetRoleCode) {
+    public record Snapshot(Long viewAsSessionId, Long targetUserId, String targetRoleCode,
+                           Long administratorUserId, String administratorUsername) {
+
+        public Snapshot(Long viewAsSessionId, Long targetUserId, String targetRoleCode) {
+            this(viewAsSessionId, targetUserId, targetRoleCode, null, null);
+        }
     }
 }

@@ -41,7 +41,8 @@ public record ViewAsSessionResponse(
         @Schema(description = "When it ended, null while open.", nullable = true)
         LocalDateTime endedAt,
 
-        @Schema(description = "How many audited actions happened inside it.", example = "3")
+        @Schema(description = "How many screens were viewed inside it (repeat views of the same "
+                + "screen within a minute count once).", example = "3")
         int actionsPerformed,
 
         @Schema(description = """
@@ -56,7 +57,8 @@ public record ViewAsSessionResponse(
                 else.
 
                 Use this to grey out every control not listed. The server enforces it \
-                independently, so a client that shows a disabled control gains nothing.
+                independently: supervised requests run with exactly these permissions, \
+                and any request that would change data is refused.
                 """,
                 example = "[\"appointment.read\", \"clinical_note.read\", \"patient.read\"]")
         List<String> availablePermissions

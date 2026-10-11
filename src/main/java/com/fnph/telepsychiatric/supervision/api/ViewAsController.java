@@ -55,10 +55,14 @@ public class ViewAsController {
                     **One session at a time.** Two open sessions would make the audit trail
                     ambiguous about which one an action belonged to.
 
+                    While the session is open, requests that send the `X-View-As-Session`
+                    header run as the viewed account with its read permissions only, and
+                    any request that would change data is refused with 403. Each screen
+                    viewed is recorded as `VIEW_AS_ACTION` against the session, naming both
+                    the administrator and the viewed account.
+
                     The session expires automatically, so an administrator who walks away
-                    does not leave the mode running. Every action inside it is recorded with
-                    both identities: the administrator who authenticated and the account
-                    being acted as.
+                    does not leave the mode running.
 
                     **Requires** `supervision.view_as`, held only by the Central
                     Administrator.
@@ -100,7 +104,7 @@ public class ViewAsController {
                     """)
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Session ended."),
-            @ApiResponse(responseCode = "400", description = "That session belongs to someone else.",
+            @ApiResponse(responseCode = "403", description = "That session belongs to someone else.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "No such session.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))

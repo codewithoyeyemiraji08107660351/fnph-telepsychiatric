@@ -60,7 +60,7 @@ public class ViewAsSession extends BaseEntity {
     @Column(name = "user_agent", length = 500)
     private String userAgent;
 
-    /** How many audited actions happened inside this session. */
+    /** How many screens were viewed inside this session (see SupervisionActivityRecorder). */
     @Column(name = "actions_performed", nullable = false)
     private Integer actionsPerformed = 0;
 
