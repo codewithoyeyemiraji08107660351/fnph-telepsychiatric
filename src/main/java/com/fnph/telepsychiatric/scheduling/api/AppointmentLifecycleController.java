@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.scheduling.api;
 
+import com.fnph.telepsychiatric.common.BusinessRuleException;
 import com.fnph.telepsychiatric.appointment.Appointment;
 import com.fnph.telepsychiatric.appointment.AppointmentRepository;
 import com.fnph.telepsychiatric.appointment.Status;
@@ -50,6 +51,7 @@ public class AppointmentLifecycleController {
     private final TeamHistoryService teamHistory;
     private final ConfigurationService configuration;
     private final InAppNotificationService notifications;
+    private final RescheduleService rescheduleService;
 
     @PostMapping("/{appointmentPublicId}/cancel-request")
     @ResponseStatus(HttpStatus.CREATED)
@@ -222,7 +224,7 @@ public class AppointmentLifecycleController {
         CancellationRequest request = cancellationRepository.findByPublicId(requestPublicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such request"));
         if (!"SUBMITTED".equals(request.getStatus())) {
-            throw new IllegalStateException("That request has already been decided");
+            throw new BusinessRuleException("That request has already been decided");
         }
         if (!approve && (notes == null || notes.isBlank())) {
             throw new IllegalArgumentException("Say why, so the patient knows what to do next.");
@@ -276,6 +278,10 @@ public class AppointmentLifecycleController {
 
                     Nothing is charged again.
 
+                    **The Hub Coordinator can move a request whose time passed before it
+                    was approved.** A patient can only move an appointment that is still
+                    ahead. A reason of at least 5 characters is required and kept.
+
                     **Requires** `appointment.reschedule`.
                     """)
     @ApiResponses({
@@ -290,64 +296,8 @@ public class AppointmentLifecycleController {
             @RequestParam String reason) {
 
         Appointment appointment = requireOwnIfPatient(appointmentPublicId);
-        if (appointment.getStatus() != Status.APPROVED
-                && appointment.getStatus() != Status.AWAITING_APPROVAL) {
-            throw new IllegalStateException("Only a pending or confirmed appointment can be moved. This one is "
-                    + appointment.getStatus() + ".");
-        }
-        if (appointment.getAppointmentDate().isBefore(LocalDateTime.now())) {
-            throw new IllegalStateException("That appointment has already passed");
-        }
-
-        Slot located = slotRepository.findByPublicId(newSlotPublicId)
-                .orElseThrow(() -> new EntityNotFoundException("No such time"));
-        // Patient times only. A centre slot belongs to the centre schedule.
-        if (located.getPublication() == null
-                || located.getPublication().getAudience()
-                != ScheduleAudience.FNPH_PATIENT) {
-            throw new IllegalArgumentException("That time is not open to patients. Choose another.");
-        }
-        Slot target = slotRepository.findByIdForUpdate(located.getId())
-                .filter(Slot::isClaimable)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "That time has been taken. Choose another."));
-
-        Slot previous = appointment.getSlot();
-        if (previous != null) {
-            previous.setState(SlotState.AVAILABLE);
-            slotRepository.save(previous);
-        }
-
-        target.setState(SlotState.BOOKED);
-        slotRepository.save(target);
-
-        appointment.setSlot(target);
-        appointment.setAppointmentDate(target.getStartAt());
-        appointment.setScheduledEndAt(target.getEndAt());
-        // Cleared deliberately. Availability is per doctor per window.
-        TeamHistoryService.TeamSnapshot teamBefore = TeamHistoryService.TeamSnapshot.of(appointment);
-        appointment.setDoctor(null);
-        appointment.setNurse(null);
-        appointment.setPharmacist(null);
-        appointment.setLaboratoryTechnician(null);
-        appointment.setHimOfficer(null);
-        appointment.setAssignedRoom(null);
-        appointment.setRoom(null);
-        appointment.setJoinWindowOpensAt(null);
-        appointment.setStatus(Status.AWAITING_APPROVAL);
-        appointmentRepository.save(appointment);
-
-        transition(appointment, Status.AWAITING_APPROVAL, "Rescheduled: " + reason);
-        teamHistory.record(appointment, teamBefore,
-                AppointmentTeamEvent.ChangeSource.RESCHEDULE, reason);
-
-        notifications.notifyRole("HUB_COORDINATOR", null,
-                NotificationType.BOOKING_AWAITING_APPROVAL,
-                "Rescheduled appointment needs reassignment",
-                "Moved to %s. The team assignment was cleared because availability is per "
-                        .formatted(target.getStartAt()) + "doctor per window.",
-                "/hub/approvals/" + appointment.getPublicId(),
-                "Appointment", appointment.getId());
+        boolean byStaff = CurrentUser.get().map(u -> u.getPatientId()).orElse(null) == null;
+        rescheduleService.move(appointment, newSlotPublicId, reason, byStaff);
 
         return ResponseEntity.ok(Map.of(
                 "reference", appointment.getReference(),
@@ -378,10 +328,10 @@ public class AppointmentLifecycleController {
                                        @RequestParam String notes) {
         Appointment appointment = require(appointmentPublicId);
         if (appointment.getStatus() != Status.APPROVED && appointment.getStatus() != Status.IN_PROGRESS) {
-            throw new IllegalStateException("Only a confirmed appointment can be recorded as not attended");
+            throw new BusinessRuleException("Only a confirmed appointment can be recorded as not attended");
         }
         if (appointment.getAppointmentDate().isAfter(LocalDateTime.now())) {
-            throw new IllegalStateException("That appointment has not started yet");
+            throw new BusinessRuleException("That appointment has not started yet");
         }
 
         appointment.setStatus(Status.NO_SHOW);
