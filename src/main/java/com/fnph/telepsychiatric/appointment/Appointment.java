@@ -175,6 +175,15 @@ public class Appointment extends BaseEntity {
     private String himExceptionReason;
 
 
+    /**
+     * The missed appointment this one replaces, when the Hub Coordinator
+     * rebooked a patient who did not attend. Unique in the database, so one
+     * missed appointment can be rebooked once.
+     */
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "rescheduled_from_id")
+    private Appointment rescheduledFrom;
+
     /** Guards two patients claiming the same time concurrently. */
     @Version
     @Column(name = "version", nullable = false)
