@@ -5,6 +5,7 @@ import com.fnph.telepsychiatric.appointment.AppointmentRepository;
 import com.fnph.telepsychiatric.appointment.Status;
 import com.fnph.telepsychiatric.handler.ErrorResponse;
 import com.fnph.telepsychiatric.scheduling.BookingService;
+import com.fnph.telepsychiatric.scheduling.RescheduleService;
 import com.fnph.telepsychiatric.scheduling.Room;
 import com.fnph.telepsychiatric.scheduling.RoomRepository;
 import com.fnph.telepsychiatric.user.UserRepository;
@@ -38,6 +39,7 @@ public class ApprovalController {
     private final AppointmentRepository appointmentRepository;
     private final UserRepository userRepository;
     private final RoomRepository roomRepository;
+    private final RescheduleService rescheduleService;
 
     @GetMapping
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_READ)")
@@ -242,6 +244,72 @@ public class ApprovalController {
                         h.getFromStatus(), h.getToStatus(), h.getChangedBy(),
                         h.getChangedAt(), h.getReason()))
                 .toList());
+    }
+
+    @GetMapping("/missed")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_READ)")
+    @Operation(
+            summary = "Missed consultations not yet rebooked",
+            description = """
+                    Appointments recorded as not attended (`NO_SHOW`) in the last `days`
+                    days, most recent first, that have not been given a new time.
+
+                    **Requires** `appointment.read`.
+                    """)
+    @ApiResponse(responseCode = "200", description = "Missed appointments returned.")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public ResponseEntity<List<Map<String, Object>>> missed(
+            @Parameter(description = "How far back to look, 1 to 90 days.", example = "30")
+            @RequestParam(defaultValue = "30") int days) {
+        return ResponseEntity.ok(rescheduleService.missedNotRebooked(days).stream().map(a -> {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("publicId", a.getPublicId());
+            row.put("reference", a.getReference());
+            row.put("appointmentDate", a.getAppointmentDate());
+            row.put("scheduledEndAt", a.getScheduledEndAt());
+            row.put("patientName", a.getPatient().getFirstName() + " " + a.getPatient().getLastName());
+            row.put("ehrNumber", a.getPatient().getEhrNumber());
+            row.put("doctorName", a.getDoctor() == null ? null : a.getDoctor().getFullName());
+            row.put("noShowAt", a.getNoShowAt());
+            row.put("noShowReason", a.getNoShowReason());
+            return row;
+        }).toList());
+    }
+
+    @PostMapping("/missed/{appointmentPublicId}/rebook")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_APPROVE)")
+    @Operation(
+            summary = "Give a patient who missed their consultation a new time",
+            description = """
+                    Creates a new appointment at the chosen time, awaiting approval, linked to
+                    the missed one. The missed appointment and its record stay as they are.
+
+                    **Nothing is charged again.** The fee was taken when the missed
+                    appointment was approved, and approving the new one does not take it a
+                    second time. This is the coordinator's decision: the reason is kept on
+                    the record and in the audit log.
+
+                    The patient's intake and files move to the new appointment so the doctor
+                    sees them. Each missed appointment can be rebooked once.
+
+                    **Requires** `appointment.approve`. Patients hold `appointment.reschedule`
+                    and must not be able to rebook themselves for free.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Rebooked, awaiting approval.",
+                    content = @Content(schema = @Schema(implementation = ScheduleDtos.AppointmentResponse.class))),
+            @ApiResponse(responseCode = "400",
+                    description = "Not a missed appointment, already rebooked, the time is taken "
+                            + "or too soon, or no reason given.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<ScheduleDtos.AppointmentResponse> rebook(
+            @PathVariable String appointmentPublicId,
+            @RequestParam String newSlotPublicId,
+            @Parameter(description = "Why. Kept on the record.", required = true)
+            @RequestParam String reason) {
+        return ResponseEntity.ok(toResponse(
+                rescheduleService.rebookMissed(appointmentPublicId, newSlotPublicId, reason)));
     }
 
     private Users requireUser(String publicId, String label) {
