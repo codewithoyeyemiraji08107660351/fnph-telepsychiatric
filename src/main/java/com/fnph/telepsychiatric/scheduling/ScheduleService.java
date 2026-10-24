@@ -66,10 +66,14 @@ public class ScheduleService {
         }
         publicationRepository.findByAudienceAndServiceDate(audience, serviceDate)
                 .ifPresent(existing -> {
-                    throw new SchedulingException(
-                            "A %s schedule already exists for %s. Withdraw it before publishing "
-                                    .formatted(audience, serviceDate)
-                                    + "another, so there is never more than one grid for a day.");
+                    // One grid per day. A withdrawn day is reopened, not rebuilt:
+                    // its slots still carry the bookings that stood through the
+                    // withdrawal.
+                    throw new SchedulingException(existing.getStatus() == PublicationStatus.WITHDRAWN
+                            ? "%s is already set up and was withdrawn. Reopen it from the list instead of building it again."
+                                    .formatted(serviceDate)
+                            : "A schedule already exists for %s. Use the existing day, or withdraw it first."
+                                    .formatted(serviceDate));
                 });
 
         // Per audience, so changing the Centre duration cannot silently move
@@ -230,16 +234,91 @@ public class ScheduleService {
         return slotRepository.save(slot);
     }
 
+    /**
+     * Returns a blocked slot to the pool.
+     *
+     * On a withdrawn day this also reopens the day. Bookable times come only
+     * from open days, so a slot unblocked on a withdrawn day used to stay
+     * invisible to patients and to the Hub Coordinator's reschedule list: the
+     * coordinator unblocked it, saw "Available", and still could not use it.
+     * Only the slots that were unblocked become bookable; the rest stay blocked.
+     *
+     * Asking to unblock a slot that is already available is not an error. It
+     * is what a double click or a stale list sends.
+     */
     @Transactional
     public Slot unblockSlot(String slotPublicId) {
         Slot slot = slotRepository.findByPublicId(slotPublicId)
                 .orElseThrow(() -> new SchedulingException("No such slot"));
+        if (slot.getState() == SlotState.AVAILABLE) {
+            reopenIfWithdrawn(slot.getPublication(), "Reopened by unblocking a slot");
+            return slot;
+        }
         if (slot.getState() != SlotState.BLOCKED) {
-            throw new SchedulingException("That slot is not blocked");
+            throw new SchedulingException("That slot is taken, so there is nothing to unblock");
         }
         slot.setState(SlotState.AVAILABLE);
         slot.setBlockedReason(null);
-        return slotRepository.save(slot);
+        Slot saved = slotRepository.save(slot);
+        reopenIfWithdrawn(slot.getPublication(), "Reopened by unblocking a slot");
+        return saved;
+    }
+
+    /**
+     * Opens a withdrawn day again: the day takes bookings and every slot the
+     * withdrawal blocked returns to the pool. Slots blocked one at a time for
+     * their own reason (a room fault, a doctor away) stay blocked.
+     */
+    @Transactional
+    public SchedulePublication reopen(String publicationPublicId) {
+        SchedulePublication publication = require(publicationPublicId);
+        if (publication.getStatus() != PublicationStatus.WITHDRAWN) {
+            throw new SchedulingException("Only a withdrawn day can be reopened");
+        }
+        if (publication.getServiceDate().isBefore(com.fnph.telepsychiatric.common.HospitalClock.today())) {
+            throw new SchedulingException("That day has passed, so it cannot be reopened");
+        }
+        String withdrawReason = publication.getWithdrawReason();
+        int unblocked = 0;
+        for (Slot slot : slotRepository.findAllByPublicationIdOrderByStartAtAsc(publication.getId())) {
+            boolean blockedByWithdrawal = slot.getState() == SlotState.BLOCKED
+                    && (withdrawReason == null || withdrawReason.equals(slot.getBlockedReason()));
+            if (blockedByWithdrawal) {
+                slot.setState(SlotState.AVAILABLE);
+                slot.setBlockedReason(null);
+                slotRepository.save(slot);
+                unblocked++;
+            }
+        }
+        reopenIfWithdrawn(publication, "Reopened; %d slot(s) returned to the pool".formatted(unblocked));
+        return publication;
+    }
+
+    private void reopenIfWithdrawn(SchedulePublication publication, String note) {
+        if (publication == null || publication.getStatus() != PublicationStatus.WITHDRAWN) {
+            return;
+        }
+        if (publication.getServiceDate().isBefore(com.fnph.telepsychiatric.common.HospitalClock.today())) {
+            throw new SchedulingException("That day has passed, so it cannot be reopened");
+        }
+        String previousReason = publication.getWithdrawReason();
+        publication.setStatus(PublicationStatus.PUBLISHED);
+        publication.setPublishedAt(LocalDateTime.now());
+        publication.setPublishedBy(CurrentUser.usernameOrSystem());
+        // Cleared so the list stops calling an open day withdrawn. The audit
+        // entry keeps the original reason.
+        publication.setWithdrawnAt(null);
+        publication.setWithdrawReason(null);
+        publicationRepository.save(publication);
+
+        auditService.record(AuditService.AuditEvent.builder()
+                .action(AuditAction.RECORD_UPDATED)
+                .entityType("SchedulePublication")
+                .entityId(publication.getId())
+                .details(note)
+                .reason(previousReason == null ? null : "Previously withdrawn: " + previousReason)
+                .build());
+        log.info("Reopened {} for {}: {}", publication.getAudience(), publication.getServiceDate(), note);
     }
 
     @Transactional(readOnly = true)

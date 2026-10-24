@@ -164,6 +164,29 @@ public class ScheduleController {
         return ResponseEntity.ok(toResponse(scheduleService.withdraw(publicationPublicId, reason)));
     }
 
+    @PostMapping("/{publicationPublicId}/reopen")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).SCHEDULE_PUBLISH)")
+    @Operation(
+            summary = "Open a withdrawn day again",
+            description = """
+                    The day takes bookings again and every slot the withdrawal blocked returns
+                    to the pool. Slots blocked one at a time for their own reason stay
+                    blocked. Bookings that stood through the withdrawal are untouched.
+
+                    Unblocking a single slot on a withdrawn day also reopens the day, with
+                    only that slot available.
+
+                    **Requires** `schedule.publish`.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Open for booking."),
+            @ApiResponse(responseCode = "400", description = "Not withdrawn, or the day has passed.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<ScheduleDtos.PublicationResponse> reopen(@PathVariable String publicationPublicId) {
+        return ResponseEntity.ok(toResponse(scheduleService.reopen(publicationPublicId)));
+    }
+
     @PostMapping("/slots/{slotPublicId}/block")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).SCHEDULE_PUBLISH)")
     @Operation(
@@ -191,7 +214,13 @@ public class ScheduleController {
     @PostMapping("/slots/{slotPublicId}/unblock")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).SCHEDULE_PUBLISH)")
     @Operation(summary = "Return a blocked slot to the pool",
-            description = "**Requires** `schedule.publish`.")
+            description = """
+                    On a withdrawn day this also reopens the day, so the slot can be booked and
+                    offered when rescheduling. Unblocking a slot that is already available
+                    does nothing and succeeds.
+
+                    **Requires** `schedule.publish`.
+                    """)
     @ApiResponse(responseCode = "204", description = "Available again.")
     public ResponseEntity<Void> unblockSlot(@PathVariable String slotPublicId) {
         scheduleService.unblockSlot(slotPublicId);
