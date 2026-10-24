@@ -100,10 +100,6 @@ public class Payment extends BaseEntity {
     @Column(name = "initiation_response", columnDefinition = "TEXT")
     private String initiationResponse;
 
-    /** Remita's latest verification response, raw. */
-    @Column(name = "verification_response", columnDefinition = "TEXT")
-    private String verificationResponse;
-
     @Column(name = "last_verified_at")
     private LocalDateTime lastVerifiedAt;
 
