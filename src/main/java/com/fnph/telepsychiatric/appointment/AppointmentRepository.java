@@ -116,4 +116,19 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
                        @Param("excludeId") Long excludeId,
                        @Param("start") LocalDateTime start,
                        @Param("end") LocalDateTime end);
+
+    /**
+     * Missed appointments since a date that have not been rebooked yet,
+     * most recent first. Patient fetched for the hub's list.
+     */
+    @Query("""
+           select a from Appointment a join fetch a.patient
+           where a.status = com.fnph.telepsychiatric.appointment.Status.NO_SHOW
+             and a.appointmentDate >= :since
+             and not exists (select 1 from Appointment b where b.rescheduledFrom = a)
+           order by a.appointmentDate desc
+           """)
+    List<Appointment> findMissedNotRebooked(@Param("since") LocalDateTime since);
+
+    boolean existsByRescheduledFrom(Appointment rescheduledFrom);
 }
