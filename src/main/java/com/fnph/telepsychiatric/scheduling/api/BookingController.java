@@ -46,7 +46,11 @@ public class BookingController {
     @GetMapping("/days")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).SLOT_READ)")
     public List<LocalDate> days() {
-        journey.requirePayment(CurrentUser.require().getPatientId());
+        // Patients see days only once paid. The Hub Coordinator uses the same
+        // list to move or rebook an appointment.
+        if (CurrentUser.patientId().isPresent()) {
+            journey.requirePayment(CurrentUser.require().getPatientId());
+        }
         LocalDate end = LocalDate.now().plusMonths(3);
         return bookingService.bookableSlots(ScheduleAudience.FNPH_PATIENT).stream()
                 .map(s -> s.getStartAt().toLocalDate()).filter(d -> !d.isAfter(end)).distinct().sorted().toList();
