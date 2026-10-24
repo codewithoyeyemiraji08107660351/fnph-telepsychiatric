@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.clinical;
 
+import com.fnph.telepsychiatric.common.BusinessRuleException;
 import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.notification.InAppNotificationService;
@@ -131,7 +132,7 @@ public class ProfessionalReviewService {
         ProfessionalReview review = require(reviewPublicId);
 
         if (review.getSubmittedAt() != null) {
-            throw new IllegalStateException("That review has already been submitted");
+            throw new BusinessRuleException("That review has already been submitted");
         }
         if (outcome == ReviewOutcome.QUERY_RAISED
                 && (queryDetail == null || queryDetail.isBlank())) {
@@ -313,15 +314,21 @@ public class ProfessionalReviewService {
 
     /** FNPH bundles only: centre bundles have their own coordinators and desk. */
     private void alertUnassigned(ReviewType type, ProfessionalReview review, ReleaseBundle bundle) {
-        if (bundle == null || bundle.getAppointment() == null) {
+        // Centre bundles too. They used to be skipped here, and approval of a
+        // centre request may leave the pharmacist or technician empty, so the
+        // review sat in nobody's queue with nobody told.
+        if (bundle == null) {
             return;
         }
+        String where = bundle.getCentreAppointment() != null
+                ? "this centre consultation (" + bundle.getCentreAppointment().getCentre().getName() + ")"
+                : "this consultation";
         notifications.notifyRole("HUB_COORDINATOR", null, NotificationType.SUPPORT_TICKET_UPDATE,
                 "A " + kind(type) + " review has nobody assigned",
                 "No " + (type == ReviewType.PHARMACY ? "pharmacist" : "laboratory technician")
-                        + " was on the team for this consultation, so the review is in nobody's "
+                        + " was on the team for " + where + ", so the review is in nobody's "
                         + "queue. Assign one from the release desk.",
-                "/hub/releases", "ProfessionalReview", review.getId());
+                "/hub/releases/" + bundle.getPublicId(), "ProfessionalReview", review.getId());
     }
 
     private static String kind(ReviewType type) {

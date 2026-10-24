@@ -43,6 +43,20 @@ public record CentreReferralResponse(
         @Schema(nullable = true)
         LocalDateTime submittedAt,
 
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+
+        @Schema(description = "What the doctor reads first.")
+        String referralReason,
+
+        @Schema(nullable = true) String assessment,
+
+        @Schema(nullable = true) String currentCondition,
+
+        @Schema(nullable = true) String relevantMedicines,
+
+        @Schema(nullable = true) String previousResults,
+
+        @Schema(description = "What FNPH asked for when it returned this referral.", nullable = true)
+        String returnedReason
 ) {
 }

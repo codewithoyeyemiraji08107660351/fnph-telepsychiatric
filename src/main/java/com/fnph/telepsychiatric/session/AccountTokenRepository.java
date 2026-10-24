@@ -17,6 +17,24 @@ public interface AccountTokenRepository extends JpaRepository<AccountToken, Long
      * so a forwarded or intercepted old email stops working as soon as a fresh
      * one is requested.
      */
+    /** Tokens of one kind issued for one account since a time, used or not. */
+    @Query("""
+           select count(t) from AccountToken t
+            where t.user.id = :userId and t.purpose = :purpose and t.createdAt > :since
+           """)
+    long countIssuedForUserSince(@Param("userId") Long userId,
+                                 @Param("purpose") AccountTokenPurpose purpose,
+                                 @Param("since") LocalDateTime since);
+
+    /** Tokens of one kind issued to requests from one address since a time. */
+    @Query("""
+           select count(t) from AccountToken t
+            where t.issuedIp = :ip and t.purpose = :purpose and t.createdAt > :since
+           """)
+    long countIssuedFromIpSince(@Param("ip") String ip,
+                                @Param("purpose") AccountTokenPurpose purpose,
+                                @Param("since") LocalDateTime since);
+
     @Modifying
     @Query("""
            update AccountToken t set t.invalidatedAt = :now

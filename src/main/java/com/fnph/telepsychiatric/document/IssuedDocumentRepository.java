@@ -102,4 +102,7 @@ public interface IssuedDocumentRepository extends JpaRepository<IssuedDocument, 
             detail = "scheduled sweep with no principal; expiry is time-based and applies to "
                     + "every centre, and scoping it would leave 22 centres' documents live")
     int expireLapsed(@Param("now") LocalDateTime now);
+
+    /** A delivered bundle's documents, for the centre it was delivered to. */
+    List<IssuedDocument> findAllByBundleIdAndCentreId(Long bundleId, Long centreId);
 }

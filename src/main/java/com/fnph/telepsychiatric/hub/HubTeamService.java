@@ -77,6 +77,7 @@ public class HubTeamService {
     private final TeamHistoryService teamHistory;
     private final InAppNotificationService notifications;
     private final AuditService auditService;
+    private final com.fnph.telepsychiatric.scheduling.DoctorCalendar doctorCalendar;
 
     /** A team role and the account role code someone must hold to fill it. */
     public enum Role {
@@ -239,6 +240,14 @@ public class HubTeamService {
                 .orElse(false);
     }
 
+    /**
+     * The same eligibility rule, for callers outside the FNPH team flow: the
+     * centre release desk assigning a reviewer to a centre bundle.
+     */
+    public void assertEligible(Users user, Role role) {
+        requireEligible(user, role);
+    }
+
     private void requireEligible(Users user, Role role) {
         if (!user.isEnabled()) {
             throw new IllegalArgumentException(user.getFullName() + "'s account is not active");
@@ -264,8 +273,10 @@ public class HubTeamService {
             throw new BookingException(
                     doctor.getFullName() + " is not marked available for the whole of that slot");
         }
-        if (appointmentRepository.doctorBusy(doctor.getId(), appointment.getId(),
-                appointment.getAppointmentDate(), appointment.getScheduledEndAt())) {
+        // Both pathways: a centre consultation at the same time is as much a
+        // clash as an FNPH one.
+        if (doctorCalendar.busy(doctor.getId(), appointment.getAppointmentDate(),
+                appointment.getScheduledEndAt(), appointment.getId(), null)) {
             throw new BookingException(
                     doctor.getFullName() + " already has a consultation at that time");
         }

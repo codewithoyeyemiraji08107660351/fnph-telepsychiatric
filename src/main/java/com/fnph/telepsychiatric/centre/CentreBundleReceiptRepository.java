@@ -2,6 +2,8 @@ package com.fnph.telepsychiatric.centre;
 
 import com.fnph.telepsychiatric.tenancy.UnscopedQuery;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -49,4 +51,41 @@ public interface CentreBundleReceiptRepository extends JpaRepository<CentreBundl
             Long centreId);
 
     long countByCentreIdAndTreatedAtIsNull(Long centreId);
+
+    /**
+     * Bundles one service at a centre has not yet acted on, oldest first,
+     * limited to bundles that contain that service's work: the pharmacy sees
+     * bundles with a prescription, the laboratory those with an investigation
+     * request, coordination and records see every bundle.
+     */
+    @Query("""
+           select r from CentreBundleReceipt r
+           join fetch r.centrePatient
+           join fetch r.centreAppointment
+           where r.centre.id = :centreId
+             and not exists (select a.id from CentreBundleAction a
+                             where a.receipt.id = r.id and a.capability = :capability)
+             and (:needs = 'ANY'
+                  or (:needs = 'PRESCRIPTION' and exists (
+                        select p.id from Prescription p where p.bundle.id = r.bundle.id))
+                  or (:needs = 'INVESTIGATION' and exists (
+                        select i.id from Investigation i where i.bundle.id = r.bundle.id)))
+           order by r.deliveredAt asc
+           """)
+    List<CentreBundleReceipt> findAwaitingByCentreId(@Param("centreId") Long centreId,
+                                                     @Param("capability") CentreCapability capability,
+                                                     @Param("needs") String needs);
+
+    /** Bundles one service at a centre has acted on, most recently delivered first. */
+    @Query("""
+           select r from CentreBundleReceipt r
+           join fetch r.centrePatient
+           join fetch r.centreAppointment
+           where r.centre.id = :centreId
+             and exists (select a.id from CentreBundleAction a
+                         where a.receipt.id = r.id and a.capability = :capability)
+           order by r.deliveredAt desc
+           """)
+    List<CentreBundleReceipt> findActedByCentreId(@Param("centreId") Long centreId,
+                                                  @Param("capability") CentreCapability capability);
 }

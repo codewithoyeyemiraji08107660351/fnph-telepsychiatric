@@ -116,20 +116,12 @@ services:
         sync: false
       - key: REMITA_SECRET_KEY
         sync: false
-      - key: REMITA_MERCHANT_ID
-        sync: false
-      - key: REMITA_SERVICE_TYPE_ID
-        sync: false
-      - key: REMITA_API_KEY
-        sync: false
-      - key: REMITA_API_TOKEN
-        sync: false
       - key: REMITA_WEBHOOK_SECRET
         sync: false
       - key: REMITA_READ_TIMEOUT_SECONDS
         value: 30
-      - key: REMITA_TEST_PHONE
-        value: ""
+      - key: REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID
+        value: "false"
 
       - key: VIDEO_PROVIDER
         value: daily

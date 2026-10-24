@@ -91,7 +91,11 @@ public class SecurityConfig {
         // browser preflight rejects every supervised request before it is sent.
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With", "Accept",
                 SupervisionContextFilter.HEADER));
-        config.setExposedHeaders(List.of("Location"));
+        // Content-Disposition carries the server's filename for downloads
+        // (documents, the Finance Excel export). Not exposed, the browser hides
+        // it from script on a cross-origin deployment and the client falls back
+        // to a generic name.
+        config.setExposedHeaders(List.of("Location", "Content-Disposition"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

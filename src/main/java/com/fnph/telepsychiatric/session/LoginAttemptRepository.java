@@ -44,4 +44,16 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
              and a.outcome <> com.fnph.telepsychiatric.session.LoginOutcome.SUCCESS
            """)
     long countRecentFailuresForIp(@Param("ip") String ip, @Param("since") LocalDateTime since);
+
+    /**
+     * Patient reset lookups for an EHR number with no active account, from one
+     * address. Recorded as login attempts under a "patient-reset:" prefix, so
+     * they also count towards that address's sign-in limit.
+     */
+    @Query("""
+           select count(a) from LoginAttempt a
+           where a.ipAddress = :ip and a.attemptedAt > :since
+             and a.usernameAttempted like 'patient-reset:%'
+           """)
+    long countPatientResetMissesFromIp(@Param("ip") String ip, @Param("since") LocalDateTime since);
 }

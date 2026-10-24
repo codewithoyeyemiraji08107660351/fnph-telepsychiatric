@@ -69,8 +69,12 @@ public class FinanceController {
             @RequestParam BigDecimal amount,
             @Parameter(description = "The funding instrument.", example = "FNPH/PROG/2026/Q4/017")
             @RequestParam(required = false) String reference,
-            @Parameter(description = "What this funds.", required = true)
-            @RequestParam String description) {
+            // Optional, matching the screen. Required here and optional there,
+            // every credit without a description failed with a 400 and the
+            // wallet was never funded. The reference is what makes a credit
+            // traceable; the description is context.
+            @Parameter(description = "What this funds. Optional.")
+            @RequestParam(required = false) String description) {
 
         var centre = centreRepository.findByPublicId(centrePublicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such centre"));

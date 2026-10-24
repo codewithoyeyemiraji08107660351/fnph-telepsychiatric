@@ -1,10 +1,6 @@
 package com.fnph.telepsychiatric.clinical.api;
 
 import com.fnph.telepsychiatric.clinical.*;
-import com.fnph.telepsychiatric.consultation.Consultation;
-import com.fnph.telepsychiatric.consultation.ConsultationNote;
-import com.fnph.telepsychiatric.consultation.ConsultationNoteRepository;
-import com.fnph.telepsychiatric.consultation.ConsultationRepository;
 import com.fnph.telepsychiatric.handler.ErrorResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -44,12 +40,12 @@ public class ReleaseController {
     private final ReleaseBundleRepository bundleRepository;
     private final ReleaseService releaseService;
 
-    private final PrescriptionRepository prescriptionRepository;
-    private final InvestigationRepository investigationRepository;
-    private final FollowUpRepository followUpRepository;
-
-    private final ConsultationRepository consultationRepository;
-    private final ConsultationNoteRepository consultationNoteRepository;
+    private final BundleContentAssembler contentAssembler;
+    private final ProfessionalReviewRepository reviewRepository;
+    private final ProfessionalReviewService reviewService;
+    private final com.fnph.telepsychiatric.user.UserRepository userRepository;
+    private final com.fnph.telepsychiatric.hub.HubTeamService teamService;
+    private final com.fnph.telepsychiatric.appointment.CentreAppointmentRepository centreAppointmentRepository;
 
     @GetMapping
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).RELEASE_BUNDLE_READ)")
@@ -66,7 +62,16 @@ public class ReleaseController {
 
                     `READY` bundles can be released now. `INCOMPLETE` ones name the
                     components still outstanding. `BLOCKED` ones carry the reason they were
-                    held. Centre bundles are not listed; they belong to the centre pathway.
+                    held.
+
+                    Both pathways, one desk. A centre bundle carries `pathway: CENTRE`, the
+                    centre's name, and the centre patient's local identifier in `ehrNumber`.
+                    It used to be left off, so the only route to releasing one was the
+                    notification, and a missed notification meant the centre never
+                    received the care plan.
+
+                    `openReviews` lists pharmacy and laboratory reviews still waiting, and
+                    submitted ones that raised a query, with who holds each.
 
                     **Requires** `release_bundle.read`.
                     """)
@@ -89,44 +94,99 @@ public class ReleaseController {
         )
                 : List.of(status);
 
-        return ResponseEntity.ok(
-                bundleRepository.findFnphDesk(wanted)
-                        .stream()
-                        .map(bundle -> {
-                            var appointment = bundle.getAppointment();
-                            var patient = appointment.getPatient();
+        List<ReleaseDeskRow> rows = new java.util.ArrayList<>();
 
-                            List<String> outstanding =
-                                    releaseService.componentsOf(bundle.getId())
-                                            .stream()
-                                            .filter(c -> !c.isSettled())
-                                            .map(c -> c.getComponentType().name())
-                                            .toList();
+        for (ReleaseBundle bundle : bundleRepository.findFnphDesk(wanted)) {
+            var appointment = bundle.getAppointment();
+            var patient = appointment.getPatient();
+            rows.add(new ReleaseDeskRow(
+                    bundle.getPublicId(),
+                    bundle.getStatus().name(),
+                    bundle.getBlockedReason(),
+                    bundle.getCreatedAt(),
+                    appointment.getPublicId(),
+                    appointment.getReference(),
+                    appointment.getAppointmentDate(),
+                    patient.getFirstName() + " " + patient.getLastName(),
+                    patient.getEhrNumber(),
+                    appointment.getDoctor() == null ? null : appointment.getDoctor().getFullName(),
+                    outstandingOf(bundle),
+                    openReviewsOf(bundle),
+                    "FNPH",
+                    null));
+        }
 
-                            return new ReleaseDeskRow(
-                                    bundle.getPublicId(),
-                                    bundle.getStatus().name(),
-                                    bundle.getBlockedReason(),
-                                    bundle.getCreatedAt(),
-                                    appointment.getPublicId(),
-                                    appointment.getReference(),
-                                    appointment.getAppointmentDate(),
-                                    patient.getFirstName() + " " + patient.getLastName(),
-                                    patient.getEhrNumber(),
-                                    appointment.getDoctor() == null
-                                            ? null
-                                            : appointment.getDoctor().getFullName(),
-                                    outstanding
-                            );
-                        })
-                        .toList()
-        );
+        for (ReleaseBundle bundle : bundleRepository.findCentreDesk(wanted)) {
+            var appointment = bundle.getCentreAppointment();
+            var patient = appointment.getCentrePatient();
+            rows.add(new ReleaseDeskRow(
+                    bundle.getPublicId(),
+                    bundle.getStatus().name(),
+                    bundle.getBlockedReason(),
+                    bundle.getCreatedAt(),
+                    appointment.getPublicId(),
+                    appointment.getReference(),
+                    appointment.getAppointmentDate(),
+                    patient.getFirstName() + " " + patient.getLastName(),
+                    patient.getCentrePatientId(),
+                    appointment.getDoctor() == null ? null : appointment.getDoctor().getFullName(),
+                    outstandingOf(bundle),
+                    openReviewsOf(bundle),
+                    "CENTRE",
+                    appointment.getCentre().getName()));
+        }
+
+        rows.sort(java.util.Comparator.comparing(ReleaseDeskRow::createdAt,
+                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+        return ResponseEntity.ok(rows);
+    }
+
+    private List<String> outstandingOf(ReleaseBundle bundle) {
+        return releaseService.componentsOf(bundle.getId()).stream()
+                .filter(c -> !c.isSettled())
+                .map(c -> c.getComponentType().name())
+                .toList();
     }
 
     /**
-     * One line on the release desk.
-     * Identifies the patient; carries no clinical content.
+     * Reviews still waiting, plus submitted ones that raised a query. The desk
+     * shows who holds each so an unassigned or stalled review is visible where
+     * the coordinator already looks.
      */
+    private List<OpenReview> openReviewsOf(ReleaseBundle bundle) {
+        return reviewRepository.findAllByBundleId(bundle.getId()).stream()
+                .filter(r -> Boolean.TRUE.equals(r.getQueryRaised())
+                        || (r.getSubmittedAt() == null && ProfessionalReviewService.isLive(r)))
+                .map(r -> new OpenReview(
+                        r.getPublicId(),
+                        r.getReviewType().name(),
+                        r.getPrescription() != null
+                                ? r.getPrescription().getIssueNumber()
+                                : r.getInvestigation() == null ? null : r.getInvestigation().getIssueNumber(),
+                        r.getReviewer() == null ? null : r.getReviewer().getPublicId(),
+                        r.getReviewer() == null ? null : r.getReviewer().getFullName(),
+                        Boolean.TRUE.equals(r.getQueryRaised()) ? "QUERY_RAISED"
+                                : r.getReviewer() == null ? "UNASSIGNED"
+                                : r.getOpenedAt() == null ? "NOT_OPENED" : "IN_PROGRESS",
+                        r.getAssignedAt(),
+                        r.getOpenedAt()))
+                .toList();
+    }
+
+    public record OpenReview(
+            String reviewPublicId,
+            String reviewType,
+            String documentNumber,
+            String reviewerPublicId,
+            String reviewerName,
+            @io.swagger.v3.oas.annotations.media.Schema(
+                    allowableValues = {"UNASSIGNED", "NOT_OPENED", "IN_PROGRESS", "QUERY_RAISED"})
+            String state,
+            java.time.LocalDateTime assignedAt,
+            java.time.LocalDateTime openedAt
+    ) {
+    }
+
     public record ReleaseDeskRow(
             String publicId,
             String status,
@@ -138,7 +198,12 @@ public class ReleaseController {
             String patientName,
             String ehrNumber,
             String doctorName,
-            List<String> outstanding
+            List<String> outstanding,
+            List<OpenReview> openReviews,
+            @io.swagger.v3.oas.annotations.media.Schema(allowableValues = {"FNPH", "CENTRE"})
+            String pathway,
+            @io.swagger.v3.oas.annotations.media.Schema(nullable = true)
+            String centreName
     ) {
     }
 
@@ -276,6 +341,76 @@ public class ReleaseController {
         );
     }
 
+    @PostMapping("/{bundlePublicId}/reviewers")
+    @Transactional
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_ASSIGN_TEAM)")
+    @Operation(
+            summary = "Assign the pharmacist or laboratory technician on a centre bundle",
+            description = """
+                    Moves every open review of that kind on the bundle to the named person,
+                    and records them on the centre appointment.
+
+                    Centre approval may leave the pharmacist or technician empty. A review
+                    issued then sat in nobody's queue, the hub was never told, and the
+                    FNPH team tools could not reach a centre appointment, so the bundle
+                    could never become ready. This is the way out.
+
+                    FNPH bundles are refused: change their team from the consultation's
+                    team panel, which also keeps the appointment's team in step.
+
+                    The person must be an active hospital account holding the role.
+
+                    **Requires** `appointment.assign_team`.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Assigned. The bundle is returned.",
+                    content = @Content(schema = @Schema(implementation = ReleaseBundleResponse.class))),
+            @ApiResponse(responseCode = "400",
+                    description = "Not eligible: inactive, centre staff, or lacks the role.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "409",
+                    description = "An FNPH bundle, or one already released.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<ReleaseBundleResponse> assignCentreReviewer(
+            @PathVariable String bundlePublicId,
+            @Parameter(description = "Which review.", example = "PHARMACY", required = true)
+            @RequestParam ReviewType type,
+            @Parameter(required = true) @RequestParam String userPublicId,
+            @Parameter(description = "Why. Goes to the audit trail.", required = true)
+            @RequestParam String reason) {
+
+        ReleaseBundle bundle = bundleRepository.findByPublicId(bundlePublicId)
+                .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException("No such bundle"));
+        var appointment = bundle.getCentreAppointment();
+        if (appointment == null) {
+            throw new ClinicalService.ClinicalException(
+                    "This is an FNPH bundle. Change its team from the consultation's team panel.");
+        }
+        if (bundle.getStatus() == BundleStatus.RELEASED) {
+            throw new ClinicalService.ClinicalException("This bundle is already released.");
+        }
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("Say why, for the audit trail.");
+        }
+
+        var user = userRepository.findByPublicId(userPublicId)
+                .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException("No such user"));
+        teamService.assertEligible(user, type == ReviewType.PHARMACY
+                ? com.fnph.telepsychiatric.hub.HubTeamService.Role.PHARMACIST
+                : com.fnph.telepsychiatric.hub.HubTeamService.Role.LABORATORY);
+
+        if (type == ReviewType.PHARMACY) {
+            appointment.setPharmacy(user);
+        } else {
+            appointment.setLaboratory(user);
+        }
+        centreAppointmentRepository.save(appointment);
+        reviewService.reassignOpen(bundle.getId(), type, user, reason.trim());
+
+        return ResponseEntity.ok(toResponse(bundle));
+    }
+
     private ReleaseBundleResponse toResponse(ReleaseBundle bundle) {
 
         var components = releaseService.componentsOf(bundle.getId())
@@ -290,7 +425,9 @@ public class ReleaseController {
                 .toList();
 
         ReleaseBundleResponse.ClinicalContent clinicalContent =
-                buildClinicalContent(bundle);
+                contentAssembler.contentOf(bundle);
+
+        var centreAppointment = bundle.getCentreAppointment();
 
         return new ReleaseBundleResponse(
                 bundle.getPublicId(),
@@ -302,143 +439,12 @@ public class ReleaseController {
                 bundle.getReleasedAt(),
                 bundle.getAppointment() == null
                         ? null
-                        : bundle.getAppointment().getPublicId()
-        );
-    }
-
-    /**
-     * Builds the read-only clinical section of the bundle.
-     *
-     * Prescription, investigation and follow-up entities are directly attached
-     * to the ReleaseBundle.
-     *
-     * ConsultationNote is attached to Consultation, so its lookup follows:
-     *
-     * ReleaseBundle -> Appointment -> Consultation -> ConsultationNote
-     */
-    private ReleaseBundleResponse.ClinicalContent buildClinicalContent(
-            ReleaseBundle bundle
-    ) {
-        var prescriptions = prescriptionRepository
-                .findAllByBundleId(bundle.getId())
-                .stream()
-                .map(p -> new ReleaseBundleResponse.PrescriptionContent(
-                        p.getIssueNumber(),
-                        p.getStatus() == null
-                                ? null
-                                : p.getStatus().name(),
-                        Boolean.TRUE.equals(p.getNotRequired()),
-                        p.getNotRequiredReason(),
-                        p.getIssueDate(),
-                        p.getExpiryDate(),
-                        p.getValidityDays(),
-                        p.getClinicalInformation(),
-                        p.getItems()
-                                .stream()
-                                .map(item ->
-                                        new ReleaseBundleResponse.PrescriptionItemContent(
-                                                item.getMedication(),
-                                                item.getStrength(),
-                                                item.getFrequency(),
-                                                item.getDuration(),
-                                                item.getInstructions(),
-                                                item.getSequence()
-                                        )
-                                )
-                                .toList()
-                ))
-                .toList();
-
-        var investigations = investigationRepository
-                .findAllByBundleId(bundle.getId())
-                .stream()
-                .map(i -> new ReleaseBundleResponse.InvestigationContent(
-                        i.getIssueNumber(),
-                        i.getStatus() == null
-                                ? null
-                                : i.getStatus().name(),
-                        Boolean.TRUE.equals(i.getNotRequired()),
-                        i.getNotRequiredReason(),
-                        i.getClinicalInformation(),
-                        i.getIssueDate(),
-                        i.getExpiryDate(),
-                        i.getValidityDays(),
-                        i.getItems()
-                                .stream()
-                                .map(item ->
-                                        new ReleaseBundleResponse.InvestigationItemContent(
-                                                item.getPanelName(),
-                                                item.getPanelCode(),
-                                                item.getNotes(),
-                                                item.getSequence()
-                                        )
-                                )
-                                .toList()
-                ))
-                .toList();
-
-        var followUps = followUpRepository
-                .findAllByBundleId(bundle.getId())
-                .stream()
-                .map(f -> new ReleaseBundleResponse.FollowUpContent(
-                        f.getRecommendation(),
-                        f.getReviewInterval(),
-                        f.getExpectedTimeframe(),
-                        f.getPreferredDate(),
-                        f.getPreferredTime(),
-                        f.getConsultationMode() == null
-                                ? null
-                                : f.getConsultationMode().name(),
-                        f.getStatus() == null
-                                ? null
-                                : f.getStatus().name(),
-                        f.getScheduledDate(),
-                        f.getCompletedDate(),
-                        f.getNotes()
-                ))
-                .toList();
-
-        ReleaseBundleResponse.ClinicalNoteContent clinicalNote = null;
-
-        /*
-         * Centre bundles are not part of the FNPH Hub release desk. Therefore
-         * only the FNPH appointment path is used here.
-         */
-        if (bundle.getAppointment() != null) {
-            Consultation consultation = consultationRepository
-                    .findByAppointmentId(bundle.getAppointment().getId())
-                    .orElse(null);
-
-            if (consultation != null) {
-                clinicalNote = consultationNoteRepository
-                        .findFirstByConsultationIdAndSupersededAtIsNullOrderByVersionDesc(
-                                consultation.getId()
-                        )
-                        .map(this::toClinicalNoteContent)
-                        .orElse(null);
-            }
-        }
-
-        return new ReleaseBundleResponse.ClinicalContent(
-                clinicalNote,
-                prescriptions,
-                investigations,
-                followUps
-        );
-    }
-
-    private ReleaseBundleResponse.ClinicalNoteContent toClinicalNoteContent(
-            ConsultationNote note
-    ) {
-        return new ReleaseBundleResponse.ClinicalNoteContent(
-                note.getClinicalNote(),
-                note.getVersion(),
-                Boolean.TRUE.equals(note.getIsAuthoritative()),
-                Boolean.TRUE.equals(note.getIsSigned()),
-                note.getSignedAt(),
-                note.getSignedBy(),
-                note.getFollowUpRecommendation(),
-                note.getFollowUpTimeline()
+                        : bundle.getAppointment().getPublicId(),
+                centreAppointment == null ? "FNPH" : "CENTRE",
+                centreAppointment == null ? null : centreAppointment.getCentre().getName(),
+                centreAppointment == null ? null : centreAppointment.getPublicId(),
+                centreAppointment == null ? null : centreAppointment.getReference(),
+                openReviewsOf(bundle)
         );
     }
 }

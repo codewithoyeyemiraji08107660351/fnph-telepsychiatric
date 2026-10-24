@@ -27,6 +27,20 @@ public final class HospitalClock {
         return LocalDate.now(ZONE);
     }
 
+    private static final java.time.format.DateTimeFormatter DISPLAY =
+            java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", java.util.Locale.ENGLISH);
+
+    /**
+     * A stored UTC time as people in Kaduna read it, for notification text.
+     * Formatting the raw value printed UTC with no zone, an hour early.
+     */
+    public static String display(LocalDateTime utc) {
+        if (utc == null) {
+            return "";
+        }
+        return DISPLAY.format(utc.atZone(ZoneOffset.UTC).withZoneSameInstant(ZONE)) + " WAT";
+    }
+
     /** A hospital-local date and time as the UTC value the database stores. */
     public static LocalDateTime toUtc(LocalDate date, LocalTime time) {
         return date.atTime(time).atZone(ZONE).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();

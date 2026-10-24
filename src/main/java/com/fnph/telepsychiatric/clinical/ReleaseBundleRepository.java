@@ -63,6 +63,28 @@ public interface ReleaseBundleRepository extends JpaRepository<ReleaseBundle, Lo
            """)
     List<ReleaseBundle> findFnphDesk(@Param("statuses") Collection<BundleStatus> statuses);
 
+    /**
+     * The centre half of the release desk.
+     *
+     * Centre bundles were filtered out of the desk by the inner join above and
+     * no other list showed them, so the only way to release one was the
+     * "ready to release" notification. Miss that and the centre never received
+     * the care plan. Same states, same order, same coordinator.
+     */
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "Hub Coordinator's release desk across every centre's bundles; guarded "
+                    + "by release_bundle.read, which no centre role holds")
+    @Query("""
+           select b from ReleaseBundle b
+           join fetch b.centreAppointment a
+           join fetch a.centrePatient
+           join fetch a.centre
+           left join fetch a.doctor
+           where b.status in :statuses
+           order by b.createdAt asc
+           """)
+    List<ReleaseBundle> findCentreDesk(@Param("statuses") Collection<BundleStatus> statuses);
+
     @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
             detail = "Hub workflow board: appointmentIds are FNPH appointments, whose bundles "
                     + "have no centre; reached only through release_bundle.read, which no "

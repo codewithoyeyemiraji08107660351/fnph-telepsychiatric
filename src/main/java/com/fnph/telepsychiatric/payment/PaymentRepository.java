@@ -51,4 +51,27 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
                          @Param("to") LocalDateTime to,
                          @Param("status") PaymentStatus status,
                          Pageable pageable);
+
+    /** Size check before an export, so an oversized period is refused rather than cut short. */
+    @Query("""
+           select count(p) from Payment p
+           where p.createdAt >= :from and p.createdAt < :to
+           """)
+    long countStartedBetween(@Param("from") LocalDateTime from,
+                             @Param("to") LocalDateTime to);
+
+    /**
+     * Every payment started in a half-open window, oldest first, with the
+     * patient fetched so the export can show the EHR number without a query
+     * per row.
+     */
+    @Query("""
+           select p from Payment p
+           left join fetch p.patient
+           where p.createdAt >= :from and p.createdAt < :to
+           order by p.createdAt asc, p.id asc
+           """)
+    List<Payment> findStartedBetween(@Param("from") LocalDateTime from,
+                                     @Param("to") LocalDateTime to,
+                                     Pageable pageable);
 }

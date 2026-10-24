@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.session;
 
+import com.fnph.telepsychiatric.common.BusinessRuleException;
 import com.fnph.telepsychiatric.authz.RoleScope;
 import com.fnph.telepsychiatric.security.crypto.SecretEncryptor;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
@@ -55,7 +56,7 @@ public class MfaService {
         factorRepository.findByUserIdAndType(user.getId(), MfaType.TOTP)
                 .ifPresent(existing -> {
                     if (existing.isUsable()) {
-                        throw new IllegalStateException(
+                        throw new BusinessRuleException(
                                 "A second factor is already enrolled. Remove it before enrolling another.");
                     }
                     factorRepository.delete(existing);

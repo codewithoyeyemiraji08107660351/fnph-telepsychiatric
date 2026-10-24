@@ -4,6 +4,8 @@ import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.configuration.ConfigurationKeys;
 import com.fnph.telepsychiatric.configuration.ConfigurationService;
+import com.fnph.telepsychiatric.center.Center;
+import com.fnph.telepsychiatric.patient.CentrePatient;
 import com.fnph.telepsychiatric.patient.Patient;
 import com.fnph.telepsychiatric.security.CurrentUser;
 import com.fnph.telepsychiatric.security.crypto.Tokens;
@@ -70,9 +72,31 @@ public class IssuedDocumentService {
             Long sourceId,
             Patient patient) {
 
+        return issue(type, sourceId, new Owner(patient, null, null, null));
+    }
+
+    /**
+     * Issues a document to whoever the bundle belongs to.
+     *
+     * A centre bundle has no FNPH patient. Issued with only a patient, its
+     * documents belonged to nobody: no patient could open them and the
+     * centre's ownership check refused them too, so a released centre
+     * prescription could never be printed or dispensed.
+     */
+    @Transactional
+    public IssuedDocument issue(DocumentType type, Long sourceId, Owner owner) {
         return documentRepository
                 .findByDocumentTypeAndSourceId(type, sourceId)
-                .orElseGet(() -> create(type, sourceId, patient));
+                .orElseGet(() -> create(type, sourceId, owner));
+    }
+
+    /**
+     * Who an issued document belongs to: an FNPH patient, or a centre patient
+     * and their centre. The bundle is recorded on both pathways so a released
+     * bundle can list its documents.
+     */
+    public record Owner(Patient patient, CentrePatient centrePatient, Center centre,
+                        com.fnph.telepsychiatric.clinical.ReleaseBundle bundle) {
     }
 
     /**
@@ -156,7 +180,7 @@ public class IssuedDocumentService {
     private IssuedDocument create(
             DocumentType type,
             Long sourceId,
-            Patient patient) {
+            Owner owner) {
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -194,7 +218,10 @@ public class IssuedDocumentService {
         document.setDocumentType(type);
         document.setSourceId(sourceId);
         document.setIssueNumber(nextIssueNumber(type, now));
-        document.setPatient(patient);
+        document.setPatient(owner.patient());
+        document.setCentrePatient(owner.centrePatient());
+        document.setCentre(owner.centre());
+        document.setBundle(owner.bundle());
         document.setIssuedAt(now);
         document.setExpiresAt(now.plusDays(validityDays));
         document.setMaxDownloads(maxDownloads);

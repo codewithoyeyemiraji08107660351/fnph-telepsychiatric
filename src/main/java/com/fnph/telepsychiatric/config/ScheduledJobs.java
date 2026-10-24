@@ -37,6 +37,8 @@ public class ScheduledJobs {
     private final OutboxPublisher outboxPublisher;
     private final BookingService bookingService;
     private final ConsultationService consultationService;
+    private final com.fnph.telepsychiatric.consultation.CentreConsultationService centreConsultationService;
+    private final com.fnph.telepsychiatric.centre.CentreBookingService centreBookingService;
     private final ViewAsService viewAsService;
     private final IssuedDocumentService documentService;
     private final FilesystemStorageService storageService;
@@ -86,6 +88,37 @@ public class ScheduledJobs {
             int ended = consultationService.tick();
             if (ended > 0) {
                 log.info("Closed {} consultation(s) at their slot end", ended);
+            }
+        });
+    }
+
+    /**
+     * The same clock for centre sessions, which live in their own tables.
+     *
+     * Its own job rather than a second step in the one above, so an exception
+     * on one pathway cannot stop the other's warnings and slot-end close.
+     * Also closes approved centre appointments nobody joined.
+     */
+    @Scheduled(fixedDelay = 30_000)
+    public void centreConsultationClock() {
+        TenantContext.runAcrossAllCentres("Centre session clock", () -> {
+            int ended = centreConsultationService.tick();
+            if (ended > 0) {
+                log.info("Closed {} centre consultation(s) at their slot end", ended);
+            }
+        });
+    }
+
+    /**
+     * Expires centre requests nobody decided before their time came, so they
+     * stop holding the slot and the centre can choose another time.
+     */
+    @Scheduled(fixedDelay = 300_000)
+    public void expireUndecidedCentreRequests() {
+        TenantContext.runAcrossAllCentres("Centre request expiry", () -> {
+            int expired = centreBookingService.expireUndecided(java.time.LocalDateTime.now());
+            if (expired > 0) {
+                log.info("Expired {} undecided centre request(s)", expired);
             }
         });
     }

@@ -36,6 +36,10 @@ public class CentreController {
     private final CenterRepository centreRepository;
     private final com.fnph.telepsychiatric.appointment.CentreAppointmentRepository appointmentRepository;
     private final com.fnph.telepsychiatric.configuration.ConfigurationService configuration;
+    private final com.fnph.telepsychiatric.clinical.api.BundleContentAssembler contentAssembler;
+    private final CentreBookingService bookingService;
+    private final CentreVitalsService vitalsService;
+    private final com.fnph.telepsychiatric.document.IssuedDocumentRepository documentRepository;
 
     @PostMapping("/referrals")
     @ResponseStatus(HttpStatus.CREATED)
@@ -88,6 +92,35 @@ public class CentreController {
                                 : ReferralUrgency.valueOf(request.urgency())));
 
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(referral));
+    }
+
+    @PutMapping("/referrals/{referralPublicId}")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_REFERRAL_CREATE)")
+    @Operation(
+            summary = "Correct a draft or returned referral",
+            description = """
+                    Replaces the clinical content of a referral that is still a draft, or that
+                    FNPH returned asking for more. Send it again with consent afterwards.
+
+                    Refused once submitted: what FNPH approved is what the doctor reads.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Updated.",
+                    content = @Content(schema = @Schema(implementation = CentreReferralResponse.class))),
+            @ApiResponse(responseCode = "409", description = "Already submitted.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @org.springframework.transaction.annotation.Transactional
+    public ResponseEntity<CentreReferralResponse> update(
+            @PathVariable String referralPublicId,
+            @Valid @RequestBody UpdateReferralRequest request) {
+        var referral = referralService.update(referralPublicId,
+                new CentreReferralService.ReferralDetails(
+                        request.referralReason(), request.assessment(),
+                        request.currentCondition(), request.relevantMedicines(),
+                        request.previousResults(),
+                        request.urgency() == null ? null : ReferralUrgency.valueOf(request.urgency())));
+        return ResponseEntity.ok(toResponse(referral));
     }
 
     @PostMapping("/referrals/{referralPublicId}/submit")
@@ -155,8 +188,86 @@ public class CentreController {
                     row.put("referralReference", a.getReferral() == null ? null : a.getReferral().getReference());
                     // Why FNPH returned the request. It was only in the notification.
                     row.put("returnedReason", a.getReturnedReason());
+                    row.put("cancellationReason", a.getCancellationReason());
+                    row.put("cancelledAt", a.getCancelledAt());
+                    row.put("noShowReason", a.getNoShowReason());
                     return row;
                 }).toList());
+    }
+
+    @PostMapping("/appointments/{appointmentPublicId}/cancel")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_CANCEL)")
+    @Operation(
+            summary = "Cancel one of this centre's consultations",
+            description = """
+                    Cancels a pending request or a confirmed consultation before it starts,
+                    for example when the patient cannot attend.
+
+                    The time is freed and FNPH is told. The referral reopens so you can
+                    request another time without entering it again.
+
+                    Refused once the consultation has started.
+
+                    **Requires** `appointment.cancel`. Scoped to your centre.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Cancelled."),
+            @ApiResponse(responseCode = "409", description = "Already started, or not pending or confirmed.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<Map<String, Object>> cancelAppointment(
+            @PathVariable String appointmentPublicId,
+            @Parameter(description = "Why. Goes to FNPH.", required = true)
+            @RequestParam String reason) {
+        var a = bookingService.cancelByCentre(appointmentPublicId, reason);
+        // The centre does not see wallet figures, so no refund flag here.
+        return ResponseEntity.ok(Map.of(
+                "reference", a.getReference(),
+                "status", a.getStatus().name()));
+    }
+
+    @PostMapping("/appointments/{appointmentPublicId}/vitals")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).VITALS_SUBMIT)")
+    @Operation(
+            summary = "Record the patient's vitals for a consultation",
+            description = """
+                    Readings taken at the centre before the session, so the FNPH doctor
+                    sees numbers rather than a photograph of them. At least one reading.
+                    Same plausibility ranges as FNPH nursing; BMI is computed from height
+                    and weight, never sent.
+
+                    **Requires** `vitals.submit`. Scoped to your centre.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Recorded."),
+            @ApiResponse(responseCode = "409", description = "Out of range, no readings, or the "
+                    + "consultation is closed.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<Map<String, Object>> recordVitals(
+            @PathVariable String appointmentPublicId,
+            @RequestBody CentreVitalsRequest body) {
+        var saved = vitalsService.record(appointmentPublicId, new com.fnph.telepsychiatric.clinical.VitalsService.VitalsEntry(
+                body.systolic(), body.diastolic(), body.heartRate(), body.respiratoryRate(),
+                body.temperature(), body.weightKg(), body.heightCm(), body.bloodOxygen(),
+                body.bloodGlucose(), null, "CENTRE_STAFF", body.notes()));
+        return ResponseEntity.status(HttpStatus.CREATED).body(CentreClinicalViews.vitals(saved));
+    }
+
+    @GetMapping("/appointments/{appointmentPublicId}/vitals")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_REFERRAL_READ)")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    @Operation(summary = "Vitals recorded for one of this centre's consultations, newest first")
+    public ResponseEntity<List<Map<String, Object>>> vitals(@PathVariable String appointmentPublicId) {
+        return ResponseEntity.ok(vitalsService.forOwnAppointment(appointmentPublicId).stream()
+                .map(CentreClinicalViews::vitals).toList());
+    }
+
+    @Schema(name = "CentreVitalsRequest", description = "Any subset; at least one reading.")
+    public record CentreVitalsRequest(Integer systolic, Integer diastolic, Integer heartRate,
+                                      Integer respiratoryRate, Double temperature, Double weightKg,
+                                      Double heightCm, Integer bloodOxygen, Double bloodGlucose,
+                                      @jakarta.validation.constraints.Size(max = 1000) String notes) {
     }
 
     @GetMapping("/referrals")
@@ -222,9 +333,11 @@ public class CentreController {
                     **Requires** `centre_bundle.read`.
                     """)
     @org.springframework.transaction.annotation.Transactional(readOnly = true)
-    public ResponseEntity<List<Map<String, Object>>> treated() {
-        return ResponseEntity.ok(referralService.treatedHistory().stream()
-                .map(this::toQueueItem).toList());
+    public ResponseEntity<List<Map<String, Object>>> treated(
+            @Parameter(description = "Whose history. COORDINATION (default), PHARMACY, LABORATORY or HIM.")
+            @RequestParam(defaultValue = "COORDINATION") CentreCapability capability) {
+        return ResponseEntity.ok(referralService.treatedHistory(capability).stream()
+                .map(r -> toQueueItem(r, capability)).toList());
     }
 
     @GetMapping("/incoming")
@@ -246,9 +359,147 @@ public class CentreController {
                     """)
     @ApiResponse(responseCode = "200", description = "Queue returned, oldest first.")
     @org.springframework.transaction.annotation.Transactional(readOnly = true)
-    public ResponseEntity<List<Map<String, Object>>> incoming() {
-        return ResponseEntity.ok(referralService.incoming().stream()
-                .map(this::toQueueItem).toList());
+    public ResponseEntity<List<Map<String, Object>>> incoming(
+            @Parameter(description = """
+                    Whose queue. COORDINATION (default) is every bundle not yet closed by the
+                    coordinator. PHARMACY lists bundles with a prescription the pharmacy has not
+                    acted on, LABORATORY those with an investigation request, HIM every bundle
+                    records has not filed. One service acting no longer clears the others.
+                    """)
+            @RequestParam(defaultValue = "COORDINATION") CentreCapability capability) {
+        return ResponseEntity.ok(referralService.incoming(capability).stream()
+                .map(r -> toQueueItem(r, capability)).toList());
+    }
+
+    @GetMapping("/incoming/{receiptPublicId}")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_BUNDLE_READ)")
+    @Operation(
+            summary = "What a delivered care bundle contains",
+            description = """
+                    The released care plan and its documents, for the person who has to act
+                    on it.
+
+                    The incoming list only named the patient and the date, and nothing else
+                    returned the contents, so a centre pharmacist was asked to mark a bundle
+                    treated with no way to see what had been prescribed.
+
+                    Shaped by role, the same way FNPH separates them:
+                    - the signed consultation note: holders of `consultation.read` (the
+                      Centre Hub Coordinator)
+                    - prescriptions: `prescription.read` or `consultation.read`
+                    - investigation requests: `investigation.read` or `consultation.read`
+                    - the follow-up recommendation: everyone who can read the bundle
+
+                    `documents` are the issued PDFs, downloaded through
+                    `GET /api/v1/documents/{publicId}/file` against the same allowance as
+                    any other copy.
+
+                    The first open is recorded with who opened it, so FNPH can see a bundle
+                    that arrived and was never looked at. A supervised view does not count
+                    as opening it.
+                    """)
+    @ApiResponse(responseCode = "200", description = "Contents returned.")
+    @org.springframework.transaction.annotation.Transactional
+    public ResponseEntity<CentreBundleDetail> incomingItem(@PathVariable String receiptPublicId) {
+        CentreBundleReceipt receipt = com.fnph.telepsychiatric.audit.SupervisionContext.isActive()
+                ? referralService.receipt(receiptPublicId)
+                : referralService.open(receiptPublicId);
+        var bundle = receipt.getBundle();
+        var appointment = receipt.getCentreAppointment();
+        var content = contentAssembler.contentOf(bundle);
+
+        boolean clinician = has(com.fnph.telepsychiatric.authz.Permissions.CONSULTATION_READ);
+        boolean prescriptions = clinician || has(com.fnph.telepsychiatric.authz.Permissions.PRESCRIPTION_READ);
+        boolean investigations = clinician || has(com.fnph.telepsychiatric.authz.Permissions.INVESTIGATION_READ);
+
+        var documents = documentRepository
+                .findAllByBundleIdAndCentreId(bundle.getId(), TenantContext.requireCentreId())
+                .stream()
+                .filter(d -> switch (d.getDocumentType()) {
+                    case PRESCRIPTION -> prescriptions;
+                    case INVESTIGATION_REQUEST -> investigations;
+                    default -> true;
+                })
+                .map(d -> new CentreBundleDetail.Document(
+                        d.getPublicId(),
+                        d.getDocumentType().name(),
+                        d.getIssueNumber(),
+                        d.effectiveStatus(java.time.LocalDateTime.now()).name(),
+                        d.getExpiresAt(),
+                        d.getDownloadCount(),
+                        d.getMaxDownloads()))
+                .toList();
+
+        return ResponseEntity.ok(new CentreBundleDetail(
+                receipt.getPublicId(),
+                receipt.getCentrePatient().getCentrePatientId(),
+                receipt.getCentrePatient().getFirstName() + " " + receipt.getCentrePatient().getLastName(),
+                appointment.getReference(),
+                appointment.getAppointmentDate(),
+                appointment.getDoctor() == null ? null : appointment.getDoctor().getFullName(),
+                bundle.getReleasedAt(),
+                receipt.getDeliveredAt(),
+                receipt.getFirstOpenedAt(),
+                receipt.getFirstOpenedBy(),
+                receipt.getTreatedAt(),
+                receipt.getTreatedBy(),
+                receipt.getTreatmentNotes(),
+                clinician ? content.clinicalNote() : null,
+                prescriptions ? content.prescriptions() : List.of(),
+                investigations ? content.investigations() : List.of(),
+                content.followUps(),
+                documents,
+                referralService.actionsOn(receipt).stream()
+                        .map(a -> new CentreBundleDetail.Action(a.getCapability().name(),
+                                a.getActedAt(), a.getActedBy(), a.getNotes()))
+                        .toList()));
+    }
+
+    /**
+     * A delivered bundle as the centre sees it.
+     *
+     * Lists the centre may not see are empty rather than absent, so the screen
+     * has one shape to render.
+     */
+    @Schema(name = "CentreBundleDetail")
+    public record CentreBundleDetail(
+            String publicId,
+            String centrePatientId,
+            String patientName,
+            String appointmentReference,
+            java.time.LocalDateTime appointmentDate,
+            String doctorName,
+            java.time.LocalDateTime releasedAt,
+            java.time.LocalDateTime deliveredAt,
+            java.time.LocalDateTime firstOpenedAt,
+            String firstOpenedBy,
+            java.time.LocalDateTime treatedAt,
+            String treatedBy,
+            String treatmentNotes,
+            @Schema(nullable = true)
+            com.fnph.telepsychiatric.clinical.api.ReleaseBundleResponse.ClinicalNoteContent clinicalNote,
+            List<com.fnph.telepsychiatric.clinical.api.ReleaseBundleResponse.PrescriptionContent> prescriptions,
+            List<com.fnph.telepsychiatric.clinical.api.ReleaseBundleResponse.InvestigationContent> investigations,
+            List<com.fnph.telepsychiatric.clinical.api.ReleaseBundleResponse.FollowUpContent> followUps,
+            List<Document> documents,
+            List<Action> actions) {
+
+        /** What each service at the centre recorded doing with this bundle. */
+        public record Action(String capability, java.time.LocalDateTime actedAt, String actedBy,
+                             String notes) {
+        }
+
+        public record Document(String publicId, String documentType, String issueNumber,
+                               String status, java.time.LocalDateTime expiresAt,
+                               Integer downloadCount, Integer maxDownloads) {
+        }
+    }
+
+    private static boolean has(String permission) {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext()
+                .getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> permission.equals(a.getAuthority()));
     }
 
     @PostMapping("/incoming/{receiptPublicId}/treated")
@@ -274,8 +525,11 @@ public class CentreController {
             @Parameter(description = "What was done.",
                     example = "Prescription dispensed on 14 October. Patient advised on dosing.",
                     required = true)
-            @RequestParam String notes) {
-        referralService.markTreated(receiptPublicId, notes);
+            @RequestParam String notes,
+            @Parameter(description = "Which service is recording. Must match your role. "
+                    + "COORDINATION (default) also closes the bundle for the centre.")
+            @RequestParam(defaultValue = "COORDINATION") CentreCapability capability) {
+        referralService.markTreated(receiptPublicId, notes, capability);
         return ResponseEntity.noContent().build();
     }
 
@@ -303,13 +557,36 @@ public class CentreController {
     }
 
     private CentreReferralResponse toResponse(CentreReferral r) {
+        // The reason FNPH gave lives on the returned appointment request; the
+        // centre only saw it in a notification.
+        String returnedReason = r.getStatus() != ReferralStatus.RETURNED ? null
+                : appointmentRepository.findFirstByCentreIdAndReferralIdAndStatusOrderByIdDesc(
+                                r.getCentre().getId(), r.getId(), com.fnph.telepsychiatric.appointment.Status.REJECTED)
+                        .map(com.fnph.telepsychiatric.appointment.CentreAppointment::getReturnedReason)
+                        .orElse(null);
         return new CentreReferralResponse(
                 r.getPublicId(), r.getReference(),
                 r.getCentrePatient().getCentrePatientId(),
                 r.getCentrePatient().getFirstName() + " " + r.getCentrePatient().getLastName(),
                 r.getStatus().name(), r.getUrgency().name(),
                 r.getConsentAcceptedAt(), r.getConsentAcceptedBy(),
-                r.getSubmittedAt(), r.getCreatedAt());
+                r.getSubmittedAt(), r.getCreatedAt(),
+                r.getReferralReason(), r.getAssessment(), r.getCurrentCondition(),
+                r.getRelevantMedicines(), r.getPreviousResults(), returnedReason);
+    }
+
+    private Map<String, Object> toQueueItem(CentreBundleReceipt receipt, CentreCapability capability) {
+        Map<String, Object> row = toQueueItem(receipt);
+        if (capability != CentreCapability.COORDINATION) {
+            // A service's own record, not the coordinator's.
+            var own = referralService.actionsOn(receipt).stream()
+                    .filter(a -> a.getCapability() == capability).findFirst().orElse(null);
+            row.put("treatedAt", own == null ? null : own.getActedAt());
+            row.put("treatedBy", own == null ? null : own.getActedBy());
+            row.put("treatmentNotes", own == null ? null : own.getNotes());
+            row.put("outstanding", own == null);
+        }
+        return row;
     }
 
     private Map<String, Object> toQueueItem(CentreBundleReceipt receipt) {
@@ -322,6 +599,11 @@ public class CentreController {
         row.put("deliveredAt", receipt.getDeliveredAt());
         row.put("firstOpenedAt", receipt.getFirstOpenedAt());
         row.put("outstanding", receipt.isOutstanding());
+        // The treated history promised "the notes recorded at the time" and
+        // returned none of them.
+        row.put("treatedAt", receipt.getTreatedAt());
+        row.put("treatedBy", receipt.getTreatedBy());
+        row.put("treatmentNotes", receipt.getTreatmentNotes());
         return row;
     }
 }

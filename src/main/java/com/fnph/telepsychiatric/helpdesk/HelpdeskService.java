@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.helpdesk;
 
+import com.fnph.telepsychiatric.common.BusinessRuleException;
 import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.configuration.ConfigurationKeys;
@@ -135,7 +136,7 @@ public class HelpdeskService {
         SupportTicket ticket = require(ticketPublicId);
 
         if (ticket.requiresEscalation() && !internal) {
-            throw new IllegalStateException(
+            throw new BusinessRuleException(
                     "This is a clinical concern and has been escalated. The helpdesk does not "
                             + "reply to these; the clinical coordination team does. Add an "
                             + "internal note instead if you have context to pass on.");
@@ -211,7 +212,7 @@ public class HelpdeskService {
         if (ticket.requiresEscalation() && !CurrentUser.get()
                 .map(p -> p.getPermissions().contains("ticket.escalate"))
                 .orElse(false)) {
-            throw new IllegalStateException(
+            throw new BusinessRuleException(
                     "A clinical concern is resolved by the team it was escalated to, not by "
                             + "the helpdesk.");
         }

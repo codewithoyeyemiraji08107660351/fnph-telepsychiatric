@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.document.api;
 
+import com.fnph.telepsychiatric.common.BusinessRuleException;
 import com.fnph.telepsychiatric.document.DocumentStatus;
 import com.fnph.telepsychiatric.document.IssuedDocument;
 import com.fnph.telepsychiatric.document.IssuedDocumentRepository;
@@ -75,7 +76,7 @@ public class DocumentIssueController {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No document with issue number " + issueNumber));
         if (document.getStoragePath() != null) {
-            throw new IllegalStateException(
+            throw new BusinessRuleException(
                     "That document already has a file. Re-rendering would replace a file the "
                             + "patient may already have downloaded, with no way to tell the "
                             + "two apart.");
@@ -95,7 +96,7 @@ public class DocumentIssueController {
                     followUpRepository.findById(document.getSourceId())
                             .orElseThrow(() -> new EntityNotFoundException("The recommendation behind this document is missing")),
                     document.getIssueNumber(), verificationUrl);
-            default -> throw new IllegalStateException("This document type cannot be re-rendered here");
+            default -> throw new BusinessRuleException("This document type cannot be re-rendered here");
         };
         IssuedDocument rendered = documentService.attachRendered(document.getId(), pdf, "application/pdf");
         return ResponseEntity.ok(Map.of(
@@ -126,11 +127,11 @@ public class DocumentIssueController {
         IssuedDocument document = documentRepository.findByIssueNumber(issueNumber)
                 .orElseThrow(() -> new EntityNotFoundException("No document with issue number " + issueNumber));
         if (document.effectiveStatus(java.time.LocalDateTime.now()) != DocumentStatus.ACTIVE) {
-            throw new IllegalStateException("Only a valid document can be downloaded again. This one is "
+            throw new BusinessRuleException("Only a valid document can be downloaded again. This one is "
                     + document.effectiveStatus(java.time.LocalDateTime.now()) + ".");
         }
         if (document.getDownloadCount() < document.getMaxDownloads()) {
-            throw new IllegalStateException("The patient still has a download available.");
+            throw new BusinessRuleException("The patient still has a download available.");
         }
         document.setMaxDownloads(document.getMaxDownloads() + 1);
         documentRepository.save(document);

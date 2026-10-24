@@ -132,6 +132,22 @@ public class CentreAppointment extends BaseEntity implements TenantOwned {
     @Column(name = "no_show_at")
     private LocalDateTime noShowAt;
 
+    @Column(name = "cancelled_at")
+    private LocalDateTime cancelledAt;
+
+    @Column(name = "cancelled_by", length = 100)
+    private String cancelledBy;
+
+    @Column(name = "cancellation_reason", length = 500)
+    private String cancellationReason;
+
+    /** The ledger credit that returned this booking's charge, when one did. */
+    @Column(name = "wallet_reversal_id")
+    private Long walletReversalId;
+
+    @Column(name = "wallet_reversed_at")
+    private LocalDateTime walletReversedAt;
+
     @Version
     @Column(name = "version", nullable = false)
     private Long version = 0L;

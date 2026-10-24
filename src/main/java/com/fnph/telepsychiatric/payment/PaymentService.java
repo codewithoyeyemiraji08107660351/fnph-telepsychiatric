@@ -79,7 +79,7 @@ public class PaymentService {
      *
      * Set to false before production deployment.
      */
-    @Value("${application.payment.remita.accept-charge-success-as-paid:true}")
+    @Value("${application.payment.remita.accept-charge-success-as-paid:false}")
     private boolean acceptChargeSuccessAsPaid;
 
     // -------------------------------------------------------------------------
@@ -228,6 +228,28 @@ public class PaymentService {
                         : patient.getPhoneNumber();
 
         /*
+         * Remita sends payment messages to this number, so it must be the
+         * patient's own. No stand-in number is used.
+         */
+        if (phone == null || phone.isBlank()) {
+
+            payment.setStatus(
+                    PaymentStatus.FAILED
+            );
+
+            payment.setFailureReason(
+                    "No phone number on the patient record"
+            );
+
+            paymentRepository.save(payment);
+
+            throw new PaymentException(
+                    "We need your phone number to start the payment. "
+                            + "Please contact the helpdesk to add it to your record."
+            );
+        }
+
+        /*
          * Connect Gateway charge request.
          *
          * paymentIdentifier = FNPH reference
@@ -269,6 +291,37 @@ public class PaymentService {
                     "Remita Connect Gateway initiation failed for {}: {}",
                     reference,
                     result.message()
+            );
+
+            throw new PaymentException(
+                    "Payment could not be started. Please try again shortly."
+            );
+        }
+
+        boolean hasLink =
+                result.paymentLink() != null
+                        && !result.paymentLink().isBlank();
+
+        /*
+         * Live: without a payment link the patient has nowhere to pay.
+         * Test mode is exempt because the demo link page is unreliable and
+         * the charge is accepted as paid below.
+         */
+        if (!hasLink && !acceptChargeSuccessAsPaid) {
+
+            payment.setStatus(
+                    PaymentStatus.FAILED
+            );
+
+            payment.setFailureReason(
+                    "Remita created the charge but returned no payment link"
+            );
+
+            paymentRepository.save(payment);
+
+            log.error(
+                    "Remita returned no payment link for {}",
+                    reference
             );
 
             throw new PaymentException(

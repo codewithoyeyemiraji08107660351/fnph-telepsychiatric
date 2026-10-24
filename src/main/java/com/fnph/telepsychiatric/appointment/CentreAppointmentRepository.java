@@ -107,4 +107,89 @@ public interface CentreAppointmentRepository extends JpaRepository<CentreAppoint
             @org.springframework.data.repository.query.Param("doctorId") Long doctorId,
             @org.springframework.data.repository.query.Param("statuses") java.util.Collection<Status> statuses,
             @org.springframework.data.repository.query.Param("from") java.time.LocalDateTime from);
+
+    /**
+     * Approved appointments whose slot has ended with no session row. The row
+     * is created on the first join from either side, so none means nobody
+     * joined.
+     */
+    @Query("""
+           select a from CentreAppointment a
+           join fetch a.centre
+           where a.status = com.fnph.telepsychiatric.appointment.Status.APPROVED
+             and a.scheduledEndAt <= :now
+             and not exists (
+                 select c.id from CentreConsultation c where c.centreAppointment.id = a.id)
+           """)
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "scheduled session clock runs with no principal; must see every centre's "
+                    + "missed appointments or they stay APPROVED forever")
+    List<CentreAppointment> findApprovedEndedWithoutSession(@Param("now") LocalDateTime now);
+
+    /**
+     * Whether a doctor already holds an approved or running centre
+     * consultation overlapping the window. The FNPH check only ever looked at
+     * FNPH appointments, so a doctor could be booked on both pathways at once.
+     */
+    @Query("""
+           select count(a) > 0 from CentreAppointment a
+           where a.doctor.id = :doctorId
+             and a.id <> :excludeId
+             and a.status in (com.fnph.telepsychiatric.appointment.Status.APPROVED,
+                              com.fnph.telepsychiatric.appointment.Status.IN_PROGRESS)
+             and a.appointmentDate < :end
+             and a.scheduledEndAt > :start
+           """)
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "doctor double-booking check across every centre; reached only from FNPH "
+                    + "approval and team assignment, guarded by appointment.approve or assign_team")
+    boolean doctorBusy(@Param("doctorId") Long doctorId,
+                       @Param("excludeId") Long excludeId,
+                       @Param("start") LocalDateTime start,
+                       @Param("end") LocalDateTime end);
+
+    /** Whether a centre consultation room is already taken for an overlapping window. */
+    @Query("""
+           select count(a) > 0 from CentreAppointment a
+           where a.roomEntity.id = :roomId
+             and a.id <> :excludeId
+             and a.status in (com.fnph.telepsychiatric.appointment.Status.APPROVED,
+                              com.fnph.telepsychiatric.appointment.Status.IN_PROGRESS)
+             and a.appointmentDate < :end
+             and a.scheduledEndAt > :start
+           """)
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "FNPH centre-consultation room clash check across every centre; reached "
+                    + "only from centre approval, guarded by appointment.approve")
+    boolean roomBusy(@Param("roomId") Long roomId,
+                     @Param("excludeId") Long excludeId,
+                     @Param("start") LocalDateTime start,
+                     @Param("end") LocalDateTime end);
+
+    /**
+     * Requests still awaiting a decision whose time has come. Nobody can
+     * approve them any more, but they held their slot and showed as pending.
+     */
+    @Query("""
+           select a from CentreAppointment a
+           join fetch a.centre
+           left join fetch a.referral
+           where a.status = com.fnph.telepsychiatric.appointment.Status.AWAITING_APPROVAL
+             and a.appointmentDate <= :now
+           """)
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "scheduled expiry of undecided centre requests runs with no principal; must "
+                    + "see every centre's requests or stale ones hold their slot forever")
+    List<CentreAppointment> findAwaitingApprovalStartedBy(@Param("now") LocalDateTime now);
+
+    /** The hub's list of confirmed centre consultations still to come. */
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "/api/v1/hub/centre-approvals?status=APPROVED lists upcoming confirmed "
+                    + "consultations from all centres; guarded by appointment.read")
+    Page<CentreAppointment> findAllByStatusAndAppointmentDateAfterOrderByAppointmentDateAsc(
+            Status status, LocalDateTime after, Pageable pageable);
+
+    /** The latest request for a referral in one state, at one centre. */
+    java.util.Optional<CentreAppointment> findFirstByCentreIdAndReferralIdAndStatusOrderByIdDesc(
+            Long centreId, Long referralId, Status status);
 }

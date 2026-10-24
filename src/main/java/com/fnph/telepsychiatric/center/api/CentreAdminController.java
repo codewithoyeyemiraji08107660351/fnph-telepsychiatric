@@ -280,6 +280,20 @@ public class CentreAdminController {
         return ResponseEntity.ok(body);
     }
 
+    /**
+     * The digits of a search term, for matching a phone number. Fewer than
+     * four digits would match nearly every number, so they match none.
+     */
+    static String phoneDigits(String term) {
+        String digits = term.replaceAll("\\D", "");
+        if (digits.startsWith("234") && digits.length() > 6) {
+            digits = digits.substring(3);
+        } else if (digits.startsWith("0") && digits.length() > 6) {
+            digits = digits.substring(1);
+        }
+        return digits.length() < 4 ? "\u0000" : digits;
+    }
+
     @GetMapping("/centres/me/patients")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).CENTRE_PATIENT_READ)")
     @Operation(
@@ -298,7 +312,7 @@ public class CentreAdminController {
 
         var patients = (term == null || term.isBlank())
                 ? centrePatientRepository.findAllByCentreIdAndIsActiveTrueOrderByLastNameAsc(centreId)
-                : centrePatientRepository.search(centreId, term.trim());
+                : centrePatientRepository.search(centreId, term.trim(), phoneDigits(term));
 
         return ResponseEntity.ok(patients.stream().map(p -> {
             Map<String, Object> row = new java.util.LinkedHashMap<>();

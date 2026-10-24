@@ -146,7 +146,7 @@ Push to the branch, then **Deploy** in Dokploy (or enable **Auto Deploy** on the
 
 ## Not ready for real patients until
 
-- **Payments:** real Remita credentials. With placeholders the app starts but cannot take a payment.
+- **Payments:** the live Remita host and secret key. Without them the app starts but cannot take a payment. Steps and the first live payment test: [REMITA-LIVE.md](REMITA-LIVE.md).
 - **Video:** a Daily.co API key and domain. Without them, consultations cannot open a room.
 - **SMS:** patients whose hospital record has only a phone number have their enrolment code written to the server log. Anyone with log access could enrol as them. Add an SMS provider, or enrol those patients at a desk, before launch.
 - **The web app:** deployed at the address in `APP_PORTAL_URL`.

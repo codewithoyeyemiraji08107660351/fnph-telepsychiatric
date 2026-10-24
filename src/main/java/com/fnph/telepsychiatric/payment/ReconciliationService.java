@@ -66,14 +66,17 @@ public class ReconciliationService {
         for (Payment payment : payments) {
             checked++;
 
-            if (payment.getRrr() == null) {
+            if (!wentToRemita(payment)) {
                 // Settled entirely from the patient's wallet. There is nothing
                 // at the provider to compare it against, and that is correct.
                 matched++;
                 continue;
             }
 
-            RemitaClient.VerificationResult result = remitaClient.verify(payment.getRrr());
+            // Connect Gateway knows the payment by the FNPH reference sent as
+            // paymentIdentifier. The RRR column is never filled on this path,
+            // so checking by it skipped every Remita payment.
+            RemitaClient.VerificationResult result = remitaClient.verify(payment.getReference());
 
             if (!result.reachable()) {
                 // Not an exception. The provider was unavailable, which says
@@ -144,6 +147,20 @@ public class ReconciliationService {
         log.info("Reconciliation {}: {} checked, {} matched, {} exceptions",
                 saved.getPublicId(), checked, matched, exceptions);
         return saved;
+    }
+
+    /**
+     * True when part of the fee was charged through Remita, not the wallet.
+     * A payment that failed before Remita answered has nothing there to check.
+     */
+    static boolean wentToRemita(Payment payment) {
+        BigDecimal credit = payment.getCreditApplied() == null
+                ? BigDecimal.ZERO : payment.getCreditApplied();
+        boolean charged = payment.getAmount() != null
+                && payment.getAmount().subtract(credit).signum() > 0;
+        boolean neverStarted = payment.getStatus() == PaymentStatus.FAILED
+                && payment.getInitiationResponse() == null;
+        return charged && !neverStarted;
     }
 
     private void raise(ReconciliationRun run, Payment payment,

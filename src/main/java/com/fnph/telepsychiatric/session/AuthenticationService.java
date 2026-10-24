@@ -50,6 +50,10 @@ public class AuthenticationService {
     private final AccountEmailService emailService;
     private final PasswordPolicy passwordPolicy;
     private final AuthProperties properties;
+    private final com.fnph.telepsychiatric.notification.InAppNotificationService notifications;
+    private final com.fnph.telepsychiatric.audit.AuditService auditService;
+
+    static final String PATIENT_RESET_PREFIX = "patient-reset:";
 
     private static final String GENERIC_FAILURE =
             "Incorrect username or password. Please check your details and try again.";
@@ -62,10 +66,19 @@ public class AuthenticationService {
 
     // AuthenticationFailedException is the expected outcome of a rejected sign-in.
     // Keep its audit row and account/factor lockout updates instead of rolling them back.
-    @Transactional(noRollbackFor = AuthenticationFailedException.class)
+    // TooManyAttemptsException likewise: the refused attempt must still count.
+    @Transactional(noRollbackFor = {AuthenticationFailedException.class, TooManyAttemptsException.class})
     public LoginResponse login(LoginRequest request, RequestContext context) {
         String identifier = request.username().trim();
-    
+
+        // Was defined and never called, so one address could try a password
+        // across any number of accounts. Patient usernames are EHR numbers,
+        // which are not secret, so this check is what slows that down.
+        if (isRateLimited(identifier, context.ipAddress())) {
+            record(identifier, null, LoginOutcome.RATE_LIMITED, null, context);
+            throw new TooManyAttemptsException("Too many sign-in attempts. Wait "
+                    + properties.getFailureWindowMinutes() + " minutes and try again.");
+        }
 
         Optional<Users> found = userRepository.findByUsernameIgnoreCase(identifier)
                 .or(() -> userRepository.findByEmailIgnoreCase(identifier));
@@ -279,20 +292,56 @@ public class AuthenticationService {
                 context.ipAddress());
     }
 
-    /** Starts an EHR-only patient reset and returns the short-lived credential directly. */
-    @Transactional
+    /**
+     * Starts an EHR-only patient reset and returns the short-lived credential
+     * directly.
+     *
+     * The EHR number is the only check, as FNPH decided. It is printed on the
+     * patient's card, so the limits here and the notice on completion are the
+     * protection: a few resets per account a day, a few lookups per address an
+     * hour, a ten-minute credential, an audit entry for every reset, and the
+     * patient told every time their password changes.
+     */
+    // noRollbackFor: a refused lookup is still recorded, so it counts.
+    @Transactional(noRollbackFor = {IllegalArgumentException.class, TooManyAttemptsException.class})
     public PatientPasswordResetResponse startPatientPasswordReset(
             PatientPasswordResetRequest request, RequestContext context) {
         String ehrNumber = request.ehrNumber().trim();
-        Users user = userRepository.findByPatient_EhrNumber(ehrNumber)
+        LocalDateTime now = LocalDateTime.now();
+
+        String ip = context.ipAddress();
+        if (ip != null) {
+            LocalDateTime hourAgo = now.minusHours(1);
+            long fromAddress = accountTokenRepository.countIssuedFromIpSince(
+                    ip, AccountTokenPurpose.PASSWORD_RESET, hourAgo)
+                    + loginAttemptRepository.countPatientResetMissesFromIp(ip, hourAgo);
+            if (fromAddress >= properties.getPatientResetsPerIpPerHour()) {
+                throw new TooManyAttemptsException("Too many password resets from this connection. "
+                        + "Wait an hour and try again, or contact the hospital helpdesk.");
+            }
+        }
+
+        Optional<Users> found = userRepository.findByPatient_EhrNumber(ehrNumber)
                 .filter(candidate -> candidate.getPatient() != null)
                 .filter(candidate -> candidate.getStatus() == UserStatus.ACTIVE)
-                .filter(candidate -> Boolean.TRUE.equals(candidate.getIsActive()))
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "No active patient account matches that EHR number. Check the number or enrol first."));
+                .filter(candidate -> Boolean.TRUE.equals(candidate.getIsActive()));
+        if (found.isEmpty()) {
+            record(PATIENT_RESET_PREFIX + ehrNumber, null, LoginOutcome.UNKNOWN_USERNAME,
+                    "Patient password reset: no active account", context);
+            throw new IllegalArgumentException(
+                    "No active patient account matches that EHR number. Check the number or enrol first.");
+        }
+        Users user = found.get();
 
-        LocalDateTime expiresAt = LocalDateTime.now()
-                .plusMinutes(properties.getPasswordResetTokenMinutes());
+        if (accountTokenRepository.countIssuedForUserSince(
+                user.getId(), AccountTokenPurpose.PASSWORD_RESET, now.minusHours(24))
+                >= properties.getPatientResetsPerAccountPerDay()) {
+            throw new TooManyAttemptsException("This account's password has been reset several times "
+                    + "today. For your safety, contact the hospital helpdesk to reset it.");
+        }
+
+        LocalDateTime expiresAt = now.plusMinutes(Math.min(
+                properties.getPatientResetTokenMinutes(), properties.getPasswordResetTokenMinutes()));
         String raw = issueToken(user, AccountTokenPurpose.PASSWORD_RESET, expiresAt, context);
         return new PatientPasswordResetResponse(raw, expiresAt);
     }
@@ -326,9 +375,40 @@ public class AuthenticationService {
         // them, including the current one.
         sessionService.revokeAll(user.getId(), null, "Password reset");
 
-        // Patient EHR self-service recovery deliberately has no email, SMS or
-        // in-app notification. Staff and centre resets retain their email.
+        auditService.record(com.fnph.telepsychiatric.audit.AuditService.AuditEvent.builder()
+                .action(com.fnph.telepsychiatric.audit.AuditAction.PASSWORD_RESET)
+                .entityType("Users").entityId(user.getId())
+                .details(user.getPatient() != null
+                        ? "Patient password reset by EHR number"
+                        : "Password reset by link")
+                .ipAddress(context.ipAddress()).userAgent(context.userAgent())
+                .build());
+
         if (user.getPatient() == null) {
+            emailService.sendPasswordChanged(user.getEmail(), user.getFullName(), now, context.ipAddress());
+        } else {
+            tellPatientPasswordChanged(user, now, context);
+        }
+    }
+
+    /**
+     * A patient reset needs only the EHR number, so the patient must hear
+     * about every one: if it was not them, this is how they find out. It used
+     * to send nothing at all.
+     */
+    private void tellPatientPasswordChanged(Users user, LocalDateTime now, RequestContext context) {
+        try {
+            notifications.notifyUser(user,
+                    com.fnph.telepsychiatric.notification.NotificationType.SYSTEM_ALERT,
+                    "Your password was changed",
+                    "Your FNPH telepsychiatry password was changed on "
+                            + com.fnph.telepsychiatric.common.HospitalClock.display(now)
+                            + ". If this was not you, contact the hospital helpdesk straight away.",
+                    "/portal/profile", "Users", user.getId());
+        } catch (RuntimeException ex) {
+            log.warn("Could not record the password-changed notice for {}", user.getPublicId(), ex);
+        }
+        if (user.getEmail() != null && !user.getEmail().isBlank()) {
             emailService.sendPasswordChanged(user.getEmail(), user.getFullName(), now, context.ipAddress());
         }
     }

@@ -107,13 +107,22 @@ public class CentreBookingController {
     public ResponseEntity<List<Map<String, Object>>> times(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
 
-        return ResponseEntity.ok(bookingService.availableSlots(date).stream().map(s -> {
-            Map<String, Object> row = new java.util.LinkedHashMap<>();
-            row.put("slotPublicId", s.getPublicId());
-            row.put("startAt", s.getStartAt());
-            row.put("endAt", s.getEndAt());
-            return row;
-        }).toList());
+        // One row per time, not per room. Slots are generated once per centre
+        // consultation room, so with two rooms every time appeared twice. The
+        // count says how many rooms are free; the request falls back to another
+        // room at the same time if this one is taken first.
+        Map<java.time.LocalDateTime, Map<String, Object>> byStart = new java.util.TreeMap<>();
+        for (var slot : bookingService.availableSlots(date)) {
+            byStart.computeIfAbsent(slot.getStartAt(), start -> {
+                Map<String, Object> row = new java.util.LinkedHashMap<>();
+                row.put("slotPublicId", slot.getPublicId());
+                row.put("startAt", slot.getStartAt());
+                row.put("endAt", slot.getEndAt());
+                row.put("roomsFree", 0);
+                return row;
+            }).merge("roomsFree", 1, (a, b) -> (Integer) a + (Integer) b);
+        }
+        return ResponseEntity.ok(List.copyOf(byStart.values()));
     }
 
     @PostMapping("/api/v1/centres/me/booking/request")
@@ -176,12 +185,23 @@ public class CentreBookingController {
                     """)
     @ApiResponse(responseCode = "200", description = "Queue returned.")
     public ResponseEntity<List<Map<String, Object>>> centreQueue(
+            @Parameter(description = "AWAITING_APPROVAL (default) for requests to decide, or "
+                    + "APPROVED for confirmed consultations still to come.")
+            @RequestParam(defaultValue = "AWAITING_APPROVAL") Status status,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
 
-        return ResponseEntity.ok(appointmentRepository
-                .findAllByStatusOrderByAppointmentDateAsc(Status.AWAITING_APPROVAL,
-                        PageRequest.of(page, Math.min(size, 200)))
+        var pageable = PageRequest.of(page, Math.min(size, 200));
+        var rows = switch (status) {
+            case AWAITING_APPROVAL -> appointmentRepository
+                    .findAllByStatusOrderByAppointmentDateAsc(Status.AWAITING_APPROVAL, pageable);
+            case APPROVED -> appointmentRepository
+                    .findAllByStatusAndAppointmentDateAfterOrderByAppointmentDateAsc(
+                            Status.APPROVED, java.time.LocalDateTime.now(), pageable);
+            default -> throw new IllegalArgumentException(
+                    "List AWAITING_APPROVAL or APPROVED centre consultations.");
+        };
+        return ResponseEntity.ok(rows
                 .map(a -> {
                     Map<String, Object> row = new java.util.LinkedHashMap<>();
                     row.put("publicId", a.getPublicId());
@@ -191,8 +211,16 @@ public class CentreBookingController {
                             + a.getCentrePatient().getLastName());
                     row.put("centrePatientId", a.getCentrePatient().getCentrePatientId());
                     row.put("appointmentDateTime", a.getAppointmentDate());
+                    // The approve dialog checks rota cover for the whole slot. Without
+                    // the end it checked the start only, offered doctors the server
+                    // then refused, and the coordinator could not tell why.
+                    row.put("scheduledEndAt", a.getScheduledEndAt());
+                    row.put("status", a.getStatus().name());
+                    row.put("doctorName", a.getDoctor() == null ? null : a.getDoctor().getFullName());
+                    row.put("room", a.getRoom());
                     row.put("referralReason", a.getReferral() == null
                             ? null : a.getReferral().getReferralReason());
+                    row.put("referral", CentreClinicalViews.referral(a.getReferral()));
                     return row;
                 }).getContent());
     }
@@ -264,14 +292,61 @@ public class CentreBookingController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/api/v1/hub/centre-appointments/{appointmentPublicId}/cancel")
+    @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_CANCEL)")
+    @Operation(
+            summary = "Cancel a centre consultation",
+            description = """
+                    Cancels a pending request or a confirmed consultation before it starts.
+
+                    **Returns the full wallet charge** when the booking was approved. The
+                    refund is a new ledger credit pointing at the original debit, and is
+                    posted once however many times this is called. The slot is freed, the
+                    referral reopens so the centre can request another time, and the centre
+                    and the assigned doctor are told.
+
+                    Refused once the consultation has started: the session clock closes it
+                    and refunds a session the doctor did not join.
+
+                    **Requires** `appointment.cancel`.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Cancelled."),
+            @ApiResponse(responseCode = "409",
+                    description = "Already started, or not pending or confirmed.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<Map<String, Object>> cancelByHub(
+            @PathVariable String appointmentPublicId,
+            @Parameter(description = "Why. Goes to the centre.", required = true)
+            @RequestParam String reason) {
+        return ResponseEntity.ok(cancelled(bookingService.cancelByHub(appointmentPublicId, reason)));
+    }
+
+    static Map<String, Object> cancelled(com.fnph.telepsychiatric.appointment.CentreAppointment a) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("reference", a.getReference());
+        body.put("status", a.getStatus().name());
+        body.put("cancelledAt", a.getCancelledAt());
+        body.put("walletRefunded", a.getWalletReversalId() != null);
+        return body;
+    }
+
     private Users requireUser(String publicId) {
         return userRepository.findByPublicId(publicId)
                 .orElseThrow(() -> new EntityNotFoundException("No such user"));
     }
 
+    /**
+     * Blank means nobody. An id that matches no account is an error, not
+     * nobody: it used to become null silently, and the consultation ran with
+     * no pharmacist while the coordinator believed one was assigned.
+     */
     private Users optionalUser(String publicId) {
         return publicId == null || publicId.isBlank()
-                ? null : userRepository.findByPublicId(publicId).orElse(null);
+                ? null
+                : userRepository.findByPublicId(publicId)
+                        .orElseThrow(() -> new EntityNotFoundException("No such user"));
     }
 
     @Schema(name = "RegisterCentrePatientRequest", description = "A centre-local patient.")

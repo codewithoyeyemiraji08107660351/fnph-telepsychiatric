@@ -61,7 +61,26 @@ public record ReleaseBundleResponse(
                         """,
                 nullable = true
         )
-        String appointmentPublicId
+        String appointmentPublicId,
+
+        @Schema(description = "Which pathway the bundle belongs to.",
+                allowableValues = {"FNPH", "CENTRE"}, example = "CENTRE")
+        String pathway,
+
+        @Schema(description = "The centre, for a centre bundle.", nullable = true)
+        String centreName,
+
+        @Schema(description = "The centre appointment, for a centre bundle.", nullable = true)
+        String centreAppointmentPublicId,
+
+        @Schema(description = "The centre appointment reference, for a centre bundle.", nullable = true)
+        String centreAppointmentReference,
+
+        @Schema(description = """
+                Pharmacy and laboratory reviews still waiting, and submitted ones that
+                raised a query, with who holds each.
+                """)
+        List<ReleaseController.OpenReview> openReviews
 ) {
 
     @Schema(
@@ -152,6 +171,9 @@ public record ReleaseBundleResponse(
     @Schema(name = "ReleasePrescription")
     public record PrescriptionContent(
 
+            @Schema(description = "Stable key for the row.")
+            String publicId,
+
             String issueNumber,
 
             String status,
@@ -192,6 +214,9 @@ public record ReleaseBundleResponse(
     @Schema(name = "ReleaseInvestigation")
     public record InvestigationContent(
 
+            @Schema(description = "Stable key for the row.")
+            String publicId,
+
             String issueNumber,
 
             String status,
@@ -227,6 +252,9 @@ public record ReleaseBundleResponse(
 
     @Schema(name = "ReleaseFollowUp")
     public record FollowUpContent(
+
+            @Schema(description = "Stable key for the row.")
+            String publicId,
 
             String recommendation,
 

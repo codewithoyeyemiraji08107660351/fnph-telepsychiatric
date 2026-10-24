@@ -59,7 +59,8 @@ public class CentreConsultationService {
     private final DailyProperties videoProperties;
     private final ConfigurationService configuration;
     private final AuditService auditService;
-    private final ConsultationClockSteps clockSteps;
+    private final CentreConsultationClockSteps clockSteps;
+    private final com.fnph.telepsychiatric.centre.CentreReferralRepository referralRepository;
 
     // -----------------------------------------------------------------
     // Room
@@ -163,7 +164,12 @@ public class CentreConsultationService {
         // The centre is responsible for having the patient present, so the
         // cutoff lands here. A clinician arriving late must still be able to
         // enter and record the no-show.
-        if (role == ParticipantRole.CENTRE && now.isAfter(centreCutoff)) {
+        //
+        // The cutoff is for arriving, not for coming back. A centre that joined
+        // on time and lost its connection twenty minutes in is mid-session
+        // with the patient in the chair; refusing the rejoin stranded them.
+        if (role == ParticipantRole.CENTRE && now.isAfter(centreCutoff)
+                && !centreAlreadyJoined(appointment)) {
             throw new ConsultationService.ConsultationException(
                     ("The join window closed %d minutes after the start time. Contact the hub "
                             + "to rebook.").formatted(cutoff));
@@ -224,6 +230,14 @@ public class CentreConsultationService {
      * A centre principal may only reach its own appointment. The doctor is
      * hospital-scoped and reaches any.
      */
+    private boolean centreAlreadyJoined(CentreAppointment appointment) {
+        return consultationRepository.findByCentreAppointmentId(appointment.getId())
+                .filter(c -> c.getEndedAt() == null)
+                .map(c -> attendanceRepository.existsByCentreConsultationIdAndParticipantRoleAndEventType(
+                        c.getId(), ParticipantRole.CENTRE, AttendanceEventType.JOINED))
+                .orElse(false);
+    }
+
     private CentreAppointment resolveAppointment(String publicId, ParticipantRole role) {
         if (role == ParticipantRole.CENTRE) {
             Long centreId = TenantContext.current().centreId();
@@ -307,7 +321,7 @@ public class CentreConsultationService {
         deleteRooms(result.roomsToDelete());
         deleteRooms(clockSteps.expiredRooms(now));
 
-        return result.ended();
+        return result.ended() + clockSteps.closeUnattended(now);
     }
 
     /** The network half. Runs with no transaction open. */
@@ -410,6 +424,12 @@ public class CentreConsultationService {
         if (appointment != null) {
             appointment.setStatus(Status.COMPLETED);
             appointmentRepository.save(appointment);
+            // The doctor saw the patient, even if the session ended early.
+            var referral = appointment.getReferral();
+            if (referral != null && referral.getStatus() == com.fnph.telepsychiatric.centre.ReferralStatus.SCHEDULED) {
+                referral.setStatus(com.fnph.telepsychiatric.centre.ReferralStatus.COMPLETED);
+                referralRepository.save(referral);
+            }
         }
 
         auditService.record(AuditService.AuditEvent.builder()

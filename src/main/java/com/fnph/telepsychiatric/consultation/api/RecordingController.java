@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.consultation.api;
 
+import com.fnph.telepsychiatric.common.BusinessRuleException;
 import com.fnph.telepsychiatric.appointment.CentreAppointmentRepository;
 import com.fnph.telepsychiatric.configuration.ConfigurationKeys;
 import com.fnph.telepsychiatric.configuration.ConfigurationService;
@@ -70,7 +71,7 @@ public class RecordingController {
             @RequestParam String consentAcceptancePublicId) {
 
         if (!configuration.getBoolean(ConfigurationKeys.RECORDING_ENABLED)) {
-            throw new IllegalStateException("""
+            throw new BusinessRuleException("""
                     Recording is disabled. It stays off until FNPH have agreed consent, \
                     retention, access, data location, deletion and incident response. \
                     Enabling it is a configuration change with a recorded reason, and the \

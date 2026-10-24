@@ -1,5 +1,6 @@
 package com.fnph.telepsychiatric.patient.api;
 
+import com.fnph.telepsychiatric.common.BusinessRuleException;
 import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.authz.RoleRepository;
@@ -232,7 +233,7 @@ public ResponseEntity<Map<String, Object>> create(
         Patient patient = require(patientPublicId);
 
         if (!Boolean.TRUE.equals(patient.getIsEligible())) {
-            throw new IllegalStateException(
+            throw new BusinessRuleException(
                     "Record the eligibility check first. Activating on identity alone would "
                             + "let a patient who has not been physically assessed book a "
                             + "remote consultation.");
@@ -240,7 +241,7 @@ public ResponseEntity<Map<String, Object>> create(
 
         String username = patient.getEhrNumber().toLowerCase();
         if (userRepository.findByUsername(username).isPresent()) {
-            throw new IllegalStateException("An account already exists for that EHR number");
+            throw new BusinessRuleException("An account already exists for that EHR number");
         }
 
         LocalDateTime now = LocalDateTime.now();

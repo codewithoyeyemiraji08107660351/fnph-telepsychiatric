@@ -61,13 +61,15 @@ public class RemitaWebhookController {
                                          @RequestBody String payload,
                                          HttpServletRequest http) {
 
-//        if (!constantTimeEquals(secret, remitaProperties.getWebhookSecret())) {
-//            // Deliberately still 200. A 401 tells whoever is probing that the
-//            // path exists and the secret was wrong, which is a hint worth not
-//            // giving. The attempt is logged.
-//            log.warn("Remita callback with a wrong secret from {}", clientIp(http));
-//            return ResponseEntity.ok("received");
-//        }
+        if (!constantTimeEquals(secret, remitaProperties.getWebhookSecret())) {
+            // Deliberately still 200. A 401 tells whoever is probing that the
+            // path exists and the secret was wrong, which is a hint worth not
+            // giving. Nothing is stored and Remita is not called. A real
+            // payment is still caught when the patient returns to the app and
+            // by the nightly reconciliation.
+            log.warn("Remita callback with a wrong or unset secret from {}", clientIp(http));
+            return ResponseEntity.ok("received");
+        }
 
         try {
             paymentService.handleRemitaCallback(payload, clientIp(http));
@@ -81,7 +83,7 @@ public class RemitaWebhookController {
     }
 
     private boolean constantTimeEquals(String presented, String expected) {
-        if (presented == null || expected == null) {
+        if (presented == null || expected == null || expected.isBlank()) {
             return false;
         }
         return MessageDigest.isEqual(

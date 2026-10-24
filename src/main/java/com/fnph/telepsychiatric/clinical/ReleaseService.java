@@ -1,10 +1,12 @@
 package com.fnph.telepsychiatric.clinical;
 
+import com.fnph.telepsychiatric.common.BusinessRuleException;
 import com.fnph.telepsychiatric.appointment.Appointment;
 import com.fnph.telepsychiatric.appointment.CentreAppointment;
 import com.fnph.telepsychiatric.audit.AuditAction;
 import com.fnph.telepsychiatric.audit.AuditService;
 import com.fnph.telepsychiatric.document.DocumentType;
+import com.fnph.telepsychiatric.document.IssuedDocumentService;
 import com.fnph.telepsychiatric.notification.InAppNotificationService;
 import com.fnph.telepsychiatric.notification.NotificationType;
 import com.fnph.telepsychiatric.security.CurrentUser;
@@ -202,7 +204,7 @@ public class ReleaseService {
                 .toList();
 
         if (!outstanding.isEmpty()) {
-            throw new IllegalStateException(
+            throw new BusinessRuleException(
                     "Not ready. Still outstanding: " + String.join(", ", outstanding)
                             + ". Release is all or nothing, because a patient given part of "
                             + "their care plan cannot tell that is what happened.");
@@ -255,7 +257,7 @@ public class ReleaseService {
                 .orElseThrow(() -> new IllegalArgumentException("No such bundle"));
 
         if (bundle.getStatus() == BundleStatus.RELEASED) {
-            throw new IllegalStateException(
+            throw new BusinessRuleException(
                     "That bundle has already been released. Issue a superseding document "
                             + "instead of withdrawing what the patient already has.");
         }
@@ -275,12 +277,19 @@ public class ReleaseService {
      */
     private int issueDocumentsFor(ReleaseBundle bundle) {
         int issued = 0;
-        var patient = bundle.getAppointment() == null ? null : bundle.getAppointment().getPatient();
+        // A centre bundle's documents belong to the centre patient and their
+        // centre; without that owner nobody can open them.
+        var centreAppointment = bundle.getCentreAppointment();
+        var owner = new IssuedDocumentService.Owner(
+                bundle.getAppointment() == null ? null : bundle.getAppointment().getPatient(),
+                centreAppointment == null ? null : centreAppointment.getCentrePatient(),
+                centreAppointment == null ? null : centreAppointment.getCentre(),
+                bundle);
 
         for (Prescription prescription : prescriptionRepository.findAllByBundleId(bundle.getId())) {
             try {
                 var document = documentService.issue(
-                        DocumentType.PRESCRIPTION, prescription.getId(), patient);
+                        DocumentType.PRESCRIPTION, prescription.getId(), owner);
                 byte[] pdf = renderer.renderPrescription(prescription,
                         document.getIssueNumber(),
                         documentService.verificationUrlFor(document.getId()),
@@ -300,7 +309,7 @@ public class ReleaseService {
         for (Investigation investigation : investigationRepository.findAllByBundleId(bundle.getId())) {
             try {
                 var document = documentService.issue(
-                        DocumentType.INVESTIGATION_REQUEST, investigation.getId(), patient);
+                        DocumentType.INVESTIGATION_REQUEST, investigation.getId(), owner);
                 byte[] pdf = renderer.renderInvestigation(investigation,
                         document.getIssueNumber(),
                         documentService.verificationUrlFor(document.getId()),
@@ -320,7 +329,7 @@ public class ReleaseService {
         for (FollowUp followUp : followUpRepository.findAllByBundleId(bundle.getId())) {
             try {
                 var document = documentService.issue(
-                        DocumentType.FOLLOW_UP_RECOMMENDATION, followUp.getId(), patient);
+                        DocumentType.FOLLOW_UP_RECOMMENDATION, followUp.getId(), owner);
                 byte[] pdf = renderer.renderFollowUp(followUp, document.getIssueNumber(),
                         documentService.verificationUrlFor(document.getId()));
                 documentService.attachRendered(document.getId(), pdf, "application/pdf");

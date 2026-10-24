@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -46,4 +48,42 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
                     + "identifier, globally unique by uk_wallet_tx_reference; the caller "
                     + "verifies the wallet matches before returning the entry")
     Optional<WalletTransaction> findByTransactionReference(String reference);
+
+    /**
+     * Posted balance of one wallet as it stood at an instant: every posted
+     * entry created before it. Gives the opening and closing balances of an
+     * export period from the ledger itself rather than from the cached figure,
+     * which only knows the present.
+     */
+    @Query("""
+           select coalesce(sum(case when t.direction = com.fnph.telepsychiatric.payment.LedgerDirection.CREDIT
+                                    then t.amount else -t.amount end), 0)
+           from WalletTransaction t
+           where t.wallet.id = :walletId
+             and t.status = com.fnph.telepsychiatric.payment.LedgerEntryStatus.POSTED
+             and t.createdAt < :before
+           """)
+    @UnscopedQuery(value = UnscopedQuery.Reason.KEYED_BY_SCOPED_PARENT,
+            detail = "walletId comes from a Wallet Finance resolved per centre for the export; "
+                    + "the sum is over that one wallet's own entries")
+    BigDecimal balanceBefore(@Param("walletId") Long walletId,
+                             @Param("before") LocalDateTime before);
+
+    /**
+     * Every centre's ledger entries in a half-open window, for the Finance
+     * export. Across centres by design: Finance holds the hospital-wide view
+     * of wallets, and centres never read this repository.
+     */
+    @Query("""
+           select t from WalletTransaction t
+           join fetch t.centre
+           where t.createdAt >= :from and t.createdAt < :to
+           order by t.createdAt asc, t.id asc
+           """)
+    @UnscopedQuery(value = UnscopedQuery.Reason.HOSPITAL_QUEUE,
+            detail = "Finance export across every centre wallet for a period; reached only "
+                    + "through finance_report.read, which no centre role holds")
+    List<WalletTransaction> findAllBetweenForExport(@Param("from") LocalDateTime from,
+                                                       @Param("to") LocalDateTime to,
+                                                       Pageable pageable);
 }

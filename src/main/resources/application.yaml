@@ -142,6 +142,13 @@ application:
       activation-token-hours: 72
       password-reset-token-minutes: 60
 
+      # Patient self-service reset needs only the EHR number (FNPH's choice),
+      # which is printed on the hospital card. These limits are its protection.
+      # Past the per-account limit the hospital helpdesk resets the password.
+      patient-resets-per-account-per-day: ${PATIENT_RESETS_PER_ACCOUNT_PER_DAY:3}
+      patient-resets-per-ip-per-hour: ${PATIENT_RESETS_PER_IP_PER_HOUR:10}
+      patient-reset-token-minutes: ${PATIENT_RESET_TOKEN_MINUTES:10}
+
       # Six digits is a small space, so the second-factor threshold is tighter
       # than the password one.
       max-mfa-attempts: 5
@@ -175,24 +182,26 @@ application:
 
   payment:
     remita:
-      merchant-id: ${REMITA_MERCHANT_ID}
-      service-type-id: ${REMITA_SERVICE_TYPE_ID}
-      api-key: ${REMITA_API_KEY}
-      public-key: ${REMITA_PUBLIC_KEY:}
+      # Remita Connect Gateway. Test and live differ in two values only:
+      #   REMITA_API_BASE_URL  host only, no path
+      #                        test: https://api-demo.systemspecsng.com
+      #                        live: the host in Remita's live credentials email
+      #   REMITA_SECRET_KEY    the matching secret key
+      # Start-up logs what is missing and refuses to start with test mode on
+      # against a live host.
+      api-base-url: ${REMITA_API_BASE_URL:}
       secret-key: ${REMITA_SECRET_KEY:}
-      callback-url: ${REMITA_CALLBACK_URL:}
-      response-url: ${REMITA_RESPONSE_URL:}
       connect-timeout-seconds: ${REMITA_CONNECT_TIMEOUT_SECONDS:10}
       read-timeout-seconds: ${REMITA_READ_TIMEOUT_SECONDS:30}
-      api-base-url: ${REMITA_API_BASE_URL}
-      api-rrr-url: ${REMITA_API_RRR_URL:https://demo.remita.net/remita/ecomm/init.reg}
-      api-validate-rrr-url: ${REMITA_API_VALIDATE_RRR_URL:https://demo.remita.net/remita/ecomm/rrr/validate}
-      api-status-url: ${REMITA_API_STATUS_URL:https://demo.remita.net/remita/ecomm}
-      # The callback URL carries this as a path segment, because Remita sends
-      # no signature header. It makes the endpoint non-obvious; it is not the
-      # security control. Re-verifying server-to-server is.
-      webhook-secret: ${REMITA_WEBHOOK_SECRET}
-      accept-charge-success-as-paid: ${REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID:true}
+      # Last segment of the callback URL given to Remita:
+      #   https://<api host>/api/v1/webhooks/remita/<REMITA_WEBHOOK_SECRET>
+      # Remita signs nothing, so this keeps the endpoint private. It is not
+      # what decides a payment; the server-to-server check is.
+      webhook-secret: ${REMITA_WEBHOOK_SECRET:}
+      # TEST ONLY. True counts Remita's "charge created" reply as paid, so a
+      # patient could book without paying. Off unless set. The application
+      # will not start with it on against a live Remita host.
+      accept-charge-success-as-paid: ${REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID:false}
 
 
   storage:

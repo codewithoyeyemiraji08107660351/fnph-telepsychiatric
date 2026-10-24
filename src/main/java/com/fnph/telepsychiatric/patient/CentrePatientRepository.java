@@ -55,12 +55,18 @@ public interface CentrePatientRepository extends JpaRepository<CentrePatient, Lo
            select p from CentrePatient p
            where p.centre.id = :centreId
              and p.deleted = false
+             and p.isActive = true
              and (lower(p.firstName) like lower(concat('%', :term, '%'))
                or lower(p.lastName)  like lower(concat('%', :term, '%'))
-               or p.centrePatientId = :term)
+               or lower(concat(p.firstName, ' ', p.lastName)) like lower(concat('%', :term, '%'))
+               or lower(concat(p.lastName, ' ', p.firstName)) like lower(concat('%', :term, '%'))
+               or lower(p.centrePatientId) like lower(concat('%', :term, '%'))
+               or p.phoneNumber like concat('%', :digits, '%'))
+           order by p.lastName asc, p.firstName asc
            """)
     List<CentrePatient> search(@Param("centreId") Long centreId,
-                               @Param("term") String term);
+                               @Param("term") String term,
+                               @Param("digits") String digits);
 
     /**
      * Hospital-scoped lookup, for FNPH staff working across centres.

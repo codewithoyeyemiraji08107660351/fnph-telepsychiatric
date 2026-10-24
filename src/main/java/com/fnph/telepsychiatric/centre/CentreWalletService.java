@@ -164,7 +164,9 @@ public class CentreWalletService {
         String reference = "DB-" + appointmentReference;
 
         Wallet wallet = walletRepository.findByCentreId(centre.getId())
-                .orElseThrow(() -> new IllegalStateException("That centre has no wallet"));
+                .orElseThrow(() -> new com.fnph.telepsychiatric.common.BusinessRuleException(
+                        "That centre has no wallet yet. Finance must set one up before a booking "
+                                + "can be approved."));
 
         BigDecimal before = ledgerRepository.deriveBalance(wallet.getId());
         if (before.compareTo(charge) < 0) {
@@ -221,6 +223,72 @@ public class CentreWalletService {
      * identical warnings in a morning and train Finance to ignore them, which
      * is worse than not alerting.
      */
+    /**
+     * Returns a booking's charge to the centre's wallet.
+     *
+     * Posted as a new CREDIT that points at the debit it reverses; the ledger
+     * is append-only and the debit stays POSTED, so the derived balance counts
+     * both and nets to zero. Marking the debit REVERSED as well would drop it
+     * from the balance and the credit would refund it a second time.
+     *
+     * Idempotent on the appointment: the reference is fixed per booking and
+     * unique on the ledger, so a retried cancellation or a second clock pass
+     * returns the original credit instead of paying twice.
+     *
+     * @return the reversal, or null when the booking was never charged
+     */
+    @Transactional
+    public WalletTransaction reverseBookingDebit(com.fnph.telepsychiatric.appointment.CentreAppointment appointment,
+                                                String why) {
+        if (appointment.getWalletTransactionId() == null) {
+            return null;
+        }
+        String reference = "RV-" + appointment.getReference();
+        Optional<WalletTransaction> existing = ledgerRepository.findByTransactionReference(reference);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        WalletTransaction debit = ledgerRepository.findById(appointment.getWalletTransactionId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Booking " + appointment.getReference() + " points at a missing ledger entry"));
+        Wallet wallet = debit.getWallet();
+
+        BigDecimal before = ledgerRepository.deriveBalance(wallet.getId());
+        BigDecimal after = before.add(debit.getAmount());
+
+        WalletTransaction entry = new WalletTransaction();
+        entry.setCentre(wallet.getCentre());
+        entry.setWallet(wallet);
+        entry.setCentreAppointment(appointment);
+        entry.setTransactionReference(reference);
+        entry.setDirection(LedgerDirection.CREDIT);
+        entry.setStatus(LedgerEntryStatus.POSTED);
+        entry.setAmount(debit.getAmount());
+        entry.setBalanceBefore(before);
+        entry.setBalanceAfter(after);
+        entry.setDescription("Reversal of booking " + appointment.getReference() + ": " + why);
+        entry.setSource("CENTRE_BOOKING_REVERSAL");
+        entry.setReversesTransactionId(debit.getId());
+        WalletTransaction saved = ledgerRepository.save(entry);
+
+        wallet.setBalance(after);
+        wallet.setLastCreditedAt(LocalDateTime.now());
+        walletRepository.save(wallet);
+        clearAlertsAbove(wallet, after);
+
+        auditService.record(AuditService.AuditEvent.builder()
+                .action(AuditAction.WALLET_CREDITED)
+                .entityType("Wallet")
+                .entityId(wallet.getId())
+                .details("NGN %s returned for booking %s, balance now %s"
+                        .formatted(debit.getAmount(), appointment.getReference(), after))
+                .reason(why)
+                .build());
+        log.info("Centre {} booking {} reversed, NGN {} returned, balance {}",
+                wallet.getCentre().getCode(), appointment.getReference(), debit.getAmount(), after);
+        return saved;
+    }
+
     private void raiseAlertsIfNeeded(Wallet wallet, BigDecimal balance) {
         BigDecimal charge = configuration.getDecimal(ConfigurationKeys.CENTRE_BOOKING_CHARGE_NGN);
         // Thresholds are a percentage of a notional full wallet. Expressed in

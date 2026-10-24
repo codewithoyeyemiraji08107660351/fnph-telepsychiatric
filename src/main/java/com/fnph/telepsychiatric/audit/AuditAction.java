@@ -54,6 +54,7 @@ public enum AuditAction {
     PAYMENT_REFUNDED,
     WALLET_CREDITED,
     WALLET_DEBITED,
+    FINANCE_REPORT_EXPORTED,
 
     // Governance
     CONFIGURATION_CHANGED,

@@ -48,6 +48,7 @@ import java.util.Map;
 public class CentreClinicalController {
 
     private final CentreClinicalService clinicalService;
+    private final com.fnph.telepsychiatric.clinical.CentreVitalsRepository centreVitalsRepository;
     private final CentreConsultationRepository consultationRepository;
     private final CentreAppointmentRepository appointmentRepository;
     private final ReleaseBundleRepository releaseBundleRepository;
@@ -190,6 +191,12 @@ public class CentreClinicalController {
         row.put("patientName", a == null ? null
                 : a.getCentrePatient().getFirstName() + " " + a.getCentrePatient().getLastName());
         row.put("referralReason", a == null || a.getReferral() == null ? null : a.getReferral().getReferralReason());
+        // Everything the centre wrote, not only the reason, and the readings it took.
+        row.put("referral", a == null ? null
+                : com.fnph.telepsychiatric.centre.api.CentreClinicalViews.referral(a.getReferral()));
+        row.put("vitals", a == null ? List.of()
+                : centreVitalsRepository.findAllByCentreAppointmentIdOrderByMeasuredAtDesc(a.getId()).stream()
+                        .map(com.fnph.telepsychiatric.centre.api.CentreClinicalViews::vitals).toList());
         return ResponseEntity.ok(row);
     }
 
@@ -265,6 +272,8 @@ public class CentreClinicalController {
                             + a.getCentrePatient().getLastName());
                     row.put("centrePatientId", a.getCentrePatient().getCentrePatientId());
                     row.put("referralReason", a.getReferral() == null ? null : a.getReferral().getReferralReason());
+                    row.put("urgency", a.getReferral() == null || a.getReferral().getUrgency() == null
+                            ? null : a.getReferral().getUrgency().name());
                     row.put("consultationPublicId", consultationRepository.findByCentreAppointmentId(a.getId())
                             .map(c -> c.getPublicId()).orElse(null));
                     return row;

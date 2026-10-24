@@ -221,13 +221,61 @@ public class GlobalExceptionHandler {
             UploadService.UploadException.class,
             CentreBookingService.CentreBookingException.class,
             CentreWalletService.InsufficientWalletException.class,
-            com.fnph.telepsychiatric.supervision.ViewAsService.SupervisionException.class
+            com.fnph.telepsychiatric.supervision.ViewAsService.SupervisionException.class,
+            com.fnph.telepsychiatric.common.BusinessRuleException.class
     })
     public ResponseEntity<ErrorResponse> handleDomainRefusal(RuntimeException ex, HttpServletRequest request) {
         log.info("Request refused: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.builder()
                 .timestamp(LocalDateTime.now()).status(409).error("Request refused")
                 .message(ex.getMessage()).path(request.getRequestURI()).build());
+    }
+
+    /**
+     * Two people saving the same record at once. The versioned entities
+     * (wallet, appointment, slot) refuse the second write; the money and the
+     * booking are safe, but the person whose save lost used to see "An
+     * unexpected error occurred" with no hint that a reload would fix it.
+     */
+    @ExceptionHandler({
+            org.springframework.dao.OptimisticLockingFailureException.class,
+            jakarta.persistence.OptimisticLockException.class
+    })
+    public ResponseEntity<ErrorResponse> handleConcurrentChange(Exception ex, HttpServletRequest request) {
+        log.info("Concurrent change refused on {}: {}", request.getRequestURI(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.builder()
+                .timestamp(LocalDateTime.now()).status(409).error("Changed by someone else")
+                .message("Someone else changed this at the same moment. Reload the page and try again.")
+                .path(request.getRequestURI()).build());
+    }
+
+    /**
+     * A unique or foreign key constraint refused the write, usually a double
+     * submit racing itself. The database's own message names tables and
+     * columns, so it is logged, not returned.
+     */
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleIntegrityViolation(
+            org.springframework.dao.DataIntegrityViolationException ex, HttpServletRequest request) {
+        log.warn("Integrity violation on {}: {}", request.getRequestURI(),
+                ex.getMostSpecificCause().getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.builder()
+                .timestamp(LocalDateTime.now()).status(409).error("Request refused")
+                .message("That could not be saved because it clashes with a record that already exists. "
+                        + "Reload the page to see the current state.")
+                .path(request.getRequestURI()).build());
+    }
+
+    @ExceptionHandler(com.fnph.telepsychiatric.session.TooManyAttemptsException.class)
+    public ResponseEntity<ErrorResponse> handleTooManyAttempts(
+            com.fnph.telepsychiatric.session.TooManyAttemptsException ex, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.TOO_MANY_REQUESTS.value())
+                .error(HttpStatus.TOO_MANY_REQUESTS.getReasonPhrase())
+                .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .build());
     }
 
     @ExceptionHandler(AuthenticationService.AuthenticationFailedException.class)

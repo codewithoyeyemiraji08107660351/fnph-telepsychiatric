@@ -35,6 +35,21 @@ public class AuthProperties {
     /** Reset links are short-lived: the user asked for it seconds ago. */
     private int passwordResetTokenMinutes = 60;
 
+    /*
+     * Patient self-service reset works from the EHR number alone (FNPH's
+     * choice), so these limits are what stand between a known EHR number and
+     * the account.
+     */
+
+    /** Patient resets started for one account in 24 hours. After that the hospital helpdesk resets it. */
+    private int patientResetsPerAccountPerDay = 3;
+
+    /** Patient reset lookups from one address in an hour, found or not. Slows working through EHR numbers. */
+    private int patientResetsPerIpPerHour = 10;
+
+    /** Life of a patient reset credential. The patient sets the new password on the very next screen. */
+    private int patientResetTokenMinutes = 10;
+
     /** Wrong second-factor codes before the factor locks. Lower than the password threshold: six digits is a small space. */
     private int maxMfaAttempts = 5;
 
