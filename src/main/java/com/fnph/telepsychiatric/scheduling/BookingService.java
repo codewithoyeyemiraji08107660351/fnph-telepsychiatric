@@ -70,6 +70,7 @@ public class BookingService {
     private final InAppNotificationService notifications;
     private final AuditService auditService;
     private final TriageService triageService;
+    private final DoctorCalendar doctorCalendar;
 
     // -----------------------------------------------------------------
     // Step 1: choose a time
@@ -266,6 +267,7 @@ public class BookingService {
                     "Only a paid request awaiting approval can be approved. This one is "
                             + appointment.getStatus() + ".");
         }
+        requireTimeAhead(appointment);
 
         if (assignment.doctor() == null) {
             throw new BookingException("A consulting doctor is required");
@@ -274,6 +276,11 @@ public class BookingService {
                 appointment.getAppointmentDate(), appointment.getScheduledEndAt())) {
             throw new BookingException(
                     "That doctor is not marked available for the whole of that slot");
+        }
+        if (doctorCalendar.busy(assignment.doctor().getId(), appointment.getAppointmentDate(),
+                appointment.getScheduledEndAt(), appointment.getId(), null)) {
+            throw new BookingException(assignment.doctor().getFullName()
+                    + " already has a consultation at that time, on this or the centre pathway");
         }
 
         Room room = assignment.room();
@@ -304,10 +311,7 @@ public class BookingService {
 
         // Approval spends the wallet. Payment credited it; a rejection would
         // never have reached here, which is what leaves the balance intact.
-        BigDecimal fee = configuration.getDecimal(ConfigurationKeys.CONSULTATION_FEE_NGN);
-        walletService.apply(appointment.getPatient(), fee, appointment.getPayment() == null
-                ? null : appointment.getPayment().getId());
-        appointment.setWalletDebitedAt(now);
+        debitOnce(appointment, now);
 
         appointmentRepository.save(appointment);
         recordTransition(appointment, Status.AWAITING_APPROVAL, Status.APPROVED,
@@ -374,6 +378,11 @@ public class BookingService {
                 appointment.getAppointmentDate(), appointment.getScheduledEndAt())) {
             throw new BookingException(
                     "That doctor is not marked available for the whole of that slot");
+        }
+        if (doctorCalendar.busy(doctor.getId(), appointment.getAppointmentDate(),
+                appointment.getScheduledEndAt(), appointment.getId(), null)) {
+            throw new BookingException(doctor.getFullName()
+                    + " already has a consultation at that time, on this or the centre pathway");
         }
 
         TeamHistoryService.TeamSnapshot teamBefore = TeamHistoryService.TeamSnapshot.of(appointment);
@@ -475,6 +484,7 @@ public class BookingService {
                     "Only a paid request awaiting approval can be confirmed. This one is "
                             + appointment.getStatus() + ".");
         }
+        requireTimeAhead(appointment);
         if (appointment.getDoctor() == null) {
             throw new BookingException(
                     "Assign a consulting doctor first. Confirming without one produces an "
@@ -485,6 +495,36 @@ public class BookingService {
                     "Assign a room first. The patient is told the room, not the doctor's name.");
         }
         return finaliseApproval(appointment, notes);
+    }
+
+    /**
+     * Takes the consultation fee from the wallet, once per appointment.
+     *
+     * An appointment moved after approval comes back for approval, and a
+     * rebooked missed appointment arrives already paid for. Debiting again
+     * would charge the patient twice for one consultation, silently, out of
+     * any other balance they hold.
+     */
+    private void debitOnce(Appointment appointment, LocalDateTime now) {
+        if (appointment.getWalletDebitedAt() != null) {
+            return;
+        }
+        BigDecimal fee = configuration.getDecimal(ConfigurationKeys.CONSULTATION_FEE_NGN);
+        walletService.apply(appointment.getPatient(), fee,
+                appointment.getPayment() == null ? null : appointment.getPayment().getId());
+        appointment.setWalletDebitedAt(now);
+    }
+
+    /**
+     * A request whose time has passed cannot be approved: the patient would be
+     * told they are booked for a time that is already over. The coordinator
+     * moves it to a new time first.
+     */
+    private static void requireTimeAhead(Appointment appointment) {
+        if (!appointment.getAppointmentDate().isAfter(LocalDateTime.now())) {
+            throw new BookingException("This request's time has passed. Reschedule it to a new "
+                    + "time, then approve it.");
+        }
     }
 
     private Appointment requireAssignable(String appointmentPublicId) {
@@ -516,10 +556,7 @@ public class BookingService {
         appointment.setJoinWindowOpensAt(appointment.getAppointmentDate()
                 .minusMinutes(configuration.getInt(ConfigurationKeys.ROOM_OPEN_LEAD_MINUTES)));
 
-        BigDecimal fee = configuration.getDecimal(ConfigurationKeys.CONSULTATION_FEE_NGN);
-        walletService.apply(appointment.getPatient(), fee,
-                appointment.getPayment() == null ? null : appointment.getPayment().getId());
-        appointment.setWalletDebitedAt(now);
+        debitOnce(appointment, now);
         appointmentRepository.save(appointment);
 
         recordTransition(appointment, Status.AWAITING_APPROVAL, Status.APPROVED, notes);
