@@ -84,11 +84,8 @@ class TenantIsolationTest {
         registry.add("MAIL_USERNAME", () -> "test");
         registry.add("MAIL_PASSWORD", () -> "test");
         registry.add("MAIL_FROM", () -> "noreply@test.local");
-        registry.add("REMITA_BASE_URL", () -> "http://localhost:9999");
-        registry.add("REMITA_API_KEY", () -> "test");
-        registry.add("REMITA_API_TOKEN", () -> "test");
-        registry.add("REMITA_MERCHANT_ID", () -> "test");
-        registry.add("REMITA_SERVICE_TYPE_ID", () -> "test");
+        registry.add("REMITA_API_BASE_URL", () -> "http://localhost:9999");
+        registry.add("REMITA_SECRET_KEY", () -> "test");
         registry.add("REMITA_WEBHOOK_SECRET", () -> "test");
     }
 
@@ -281,7 +278,9 @@ class TenantIsolationTest {
         // returns two rows and a scoped one returns one.
         TenantContext.set(TenantScope.centre(centreA));
 
-        List<CentrePatient> found = centrePatientRepository.search(centreA, "Test");
+        // The third argument is what the controller passes when the term has
+        // no phone digits to match (CentreAdminController.phoneDigits).
+        List<CentrePatient> found = centrePatientRepository.search(centreA, "Test", "\u0000");
 
         assertThat(found).isNotEmpty();
         assertThat(found).allSatisfy(p ->
