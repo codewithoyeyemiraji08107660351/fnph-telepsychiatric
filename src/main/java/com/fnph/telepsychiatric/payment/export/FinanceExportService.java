@@ -7,6 +7,7 @@ import com.fnph.telepsychiatric.common.HospitalClock;
 import com.fnph.telepsychiatric.payment.LedgerDirection;
 import com.fnph.telepsychiatric.payment.LedgerEntryStatus;
 import com.fnph.telepsychiatric.payment.Payment;
+import com.fnph.telepsychiatric.payment.PaymentService;
 import com.fnph.telepsychiatric.payment.PaymentPurpose;
 import com.fnph.telepsychiatric.payment.PaymentRepository;
 import com.fnph.telepsychiatric.payment.PaymentStatus;
@@ -189,8 +190,14 @@ public class FinanceExportService {
                 null));
         lines.add(SummaryLine.money("Settled from patient credit (NGN)", sum(successful, FinanceExportService::creditSettled),
                 "Bookings paid from credit held on the patient's account. No new money."));
-        lines.add(SummaryLine.money("Total value of successful payments (NGN)", sum(successful, Payment::getAmount),
+        lines.add(SummaryLine.money("Total value of successful payments (NGN)",
+                sum(successful, p -> PaymentService.isBypassed(p) ? creditSettled(p) : p.getAmount()),
                 "Collected via Remita plus settled from credit."));
+        long bypassed = successful.stream().filter(PaymentService::isBypassed).count();
+        if (bypassed > 0) {
+            lines.add(SummaryLine.count("Bookings confirmed without payment (bypass)", bypassed,
+                    "Remita was not used while the payment bypass was on. No money was collected for these."));
+        }
 
         lines.add(SummaryLine.heading("Payments started in the period"));
         lines.add(SummaryLine.count("All payments", (long) payments.size(), null));
@@ -494,7 +501,8 @@ public class FinanceExportService {
 
     /** Money that arrived through Remita for this payment, or null when none did. */
     static BigDecimal collected(Payment p) {
-        if (p.getStatus() != PaymentStatus.SUCCESS || p.getAmount() == null) {
+        if (p.getStatus() != PaymentStatus.SUCCESS || p.getAmount() == null
+                || PaymentService.isBypassed(p)) {
             return null;
         }
         return p.getAmount().subtract(orZero(p.getCreditApplied()));

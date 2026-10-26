@@ -9,10 +9,23 @@ The backend is set up for live Remita. Test and live differ in two settings only
 
 Everything else stays the same: the charge and check paths, the callback URL, the amounts (sent in kobo), and the reference (the FNPH reference is the `paymentIdentifier`).
 
+## Until the live keys arrive: payment bypass
+
+Set `REMITA_BYPASS=true` in the backend environment and redeploy. Remita is not called at all, so the demo host being down does not matter.
+
+- Every consultation payment is confirmed at once and the patient goes straight to the calendar.
+- A payment left pending from before is confirmed the next time the patient's screen checks it.
+- These payments are marked **Bypassed**. They do not count as money collected in Finance reports or the Excel export, and the nightly reconciliation does not ask Remita about them.
+- The patient is told no payment is needed. HIM is told the booking went ahead without payment.
+- Start-up logs `PAYMENT BYPASS IS ON` as an error so it is not forgotten.
+- The backend refuses to start with the bypass on and a live `REMITA_API_BASE_URL`, so live keys cannot go in while it is still on.
+
+To go live: remove `REMITA_BYPASS` (or set it to `false`) in the same change that sets the live host and key.
+
 ## Switch to live
 
 1. In the production environment (Dokploy > backend > Environment), set `REMITA_API_BASE_URL` and `REMITA_SECRET_KEY` to the live values.
-2. Make sure `REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID` is not set, or is `false`. The backend refuses to start with it on against a live host.
+2. Make sure `REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID` and `REMITA_BYPASS` are not set, or are `false`. The backend refuses to start with it on against a live host.
 3. Make sure `REMITA_WEBHOOK_SECRET` is set (`openssl rand -hex 24`) and is not the value from any example file.
 4. In the Remita live profile, set the notification (callback) URL to
    `https://<api host>/api/v1/webhooks/remita/<REMITA_WEBHOOK_SECRET>`.
@@ -46,4 +59,6 @@ Use a staff test patient and the lowest fee Finance agrees to, then refund it.
 | `points at Remita's demo host` | Production is still on the demo. No real money moves. |
 | `TEST MODE IS ON` | Demo only. Every created charge counts as paid. |
 | `REMITA_WEBHOOK_SECRET is missing or shorter than 24 characters` | Callbacks are ignored until it is set. Payments still confirm on return and overnight. |
+| `PAYMENT BYPASS IS ON` | Patients book without paying. Turn it off when the live keys arrive. |
+| Start-up stops: `REMITA_BYPASS is true while REMITA_API_BASE_URL is a live Remita host` | Remove `REMITA_BYPASS` and redeploy. |
 | Start-up stops: `REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID is true while REMITA_API_BASE_URL is a live Remita host` | Remove that setting and redeploy. |

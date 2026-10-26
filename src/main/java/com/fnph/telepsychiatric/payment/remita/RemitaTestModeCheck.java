@@ -60,7 +60,24 @@ class RemitaTestModeCheck {
                             + "setting or set it to false.");
         }
 
+        if (p.isBypass() && !blankUrl && !p.isDemoHost()) {
+            throw new IllegalStateException(
+                    "REMITA_BYPASS is true while REMITA_API_BASE_URL is a live Remita host. "
+                            + "Every patient would book without paying. Remove REMITA_BYPASS "
+                            + "or set it to false.");
+        }
+
         List<String> problems = new ArrayList<>();
+        if (p.isBypass()) {
+            problems.add("PAYMENT BYPASS IS ON (REMITA_BYPASS=true). Remita is not called and "
+                    + "every consultation is confirmed without payment. Turn it off when the "
+                    + "live keys arrive.");
+            if (p.isAcceptChargeSuccessAsPaid()) {
+                problems.add("REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID has no effect while "
+                        + "REMITA_BYPASS is on.");
+            }
+            return problems;
+        }
         if (blankUrl) {
             problems.add("REMITA_API_BASE_URL is not set. Payments cannot start.");
         } else {

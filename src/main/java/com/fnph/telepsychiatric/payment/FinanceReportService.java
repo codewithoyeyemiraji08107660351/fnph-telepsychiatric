@@ -45,6 +45,14 @@ public class FinanceReportService {
     private final CenterRepository centreRepository;
     private final CentreWalletService walletService;
 
+    /** Money that came in through Remita. Nothing for a payment confirmed under the bypass. */
+    private static BigDecimal collected(Payment p) {
+        if (PaymentService.isBypassed(p)) {
+            return BigDecimal.ZERO;
+        }
+        return p.getAmount().subtract(p.getCreditApplied());
+    }
+
     /** 1. Daily totals across the window, one row per day with activity. */
     @Transactional(readOnly = true)
     public Report daily(LocalDateTime from, LocalDateTime to) {
@@ -61,7 +69,7 @@ public class FinanceReportService {
                 Map<String, Object> row = byDay.get(p.getCreatedAt().toLocalDate());
                 row.compute("successCount", (k, v) -> ((Long) v) + 1);
                 row.compute("collected", (k, v) -> ((BigDecimal) v)
-                        .add(p.getAmount().subtract(p.getCreditApplied())));
+                        .add(collected(p)));
                 row.compute("settledFromCredit", (k, v) -> ((BigDecimal) v)
                         .add(p.getCreditApplied()));
             }
@@ -86,7 +94,7 @@ public class FinanceReportService {
                     YearMonth.from(p.getCreatedAt()), m -> blankDay());
             row.compute("successCount", (k, v) -> ((Long) v) + 1);
             row.compute("collected", (k, v) -> ((BigDecimal) v)
-                    .add(p.getAmount().subtract(p.getCreditApplied())));
+                    .add(collected(p)));
             row.compute("settledFromCredit", (k, v) -> ((BigDecimal) v)
                     .add(p.getCreditApplied()));
         }

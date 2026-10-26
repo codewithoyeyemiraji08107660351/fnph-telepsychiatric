@@ -47,6 +47,12 @@ import java.util.Optional;
  *
  * Production payment confirmation must come from the appropriate
  * server-side payment confirmation mechanism.
+ *
+ * PAYMENT BYPASS (REMITA_BYPASS=true, temporary):
+ *
+ * Remita is not called. Every consultation payment is confirmed at once and
+ * marked BYPASSED, so patients can book while live credentials are not
+ * available. Refused at start-up against a live Remita host.
  */
 @Service
 @RequiredArgsConstructor
@@ -81,6 +87,22 @@ public class PaymentService {
      */
     @Value("${application.payment.remita.accept-charge-success-as-paid:false}")
     private boolean acceptChargeSuccessAsPaid;
+
+    /**
+     * TEMPORARY. When true Remita is never called and every consultation
+     * payment is confirmed at once, so patients can book while live Remita
+     * credentials are not available. See RemitaProperties.bypass.
+     */
+    @Value("${application.payment.remita.bypass:false}")
+    private boolean bypass;
+
+    /** reconciliation_status of a payment confirmed without Remita. */
+    public static final String BYPASSED = "BYPASSED";
+
+    /** True when the payment was confirmed under the payment bypass: no money moved. */
+    public static boolean isBypassed(Payment payment) {
+        return BYPASSED.equals(payment.getReconciliationStatus());
+    }
 
     // -------------------------------------------------------------------------
     // INITIATION
@@ -209,6 +231,27 @@ public class PaymentService {
             );
 
             return payment;
+        }
+
+        /*
+         * Payment bypass: Remita is not called. The fee is confirmed at once
+         * and the payment is marked BYPASSED so Finance can tell it apart and
+         * reconciliation does not ask Remita about it.
+         */
+        if (bypass) {
+
+            payment.setInitiationResponse(
+                    "BYPASS: Remita not called"
+            );
+
+            markBypassed(
+                    payment,
+                    payable
+            );
+
+            return paymentRepository
+                    .findByReference(payment.getReference())
+                    .orElse(payment);
         }
 
         /*
@@ -465,6 +508,28 @@ public class PaymentService {
         }
 
         /*
+         * Payment bypass: a payment left pending from before the bypass was
+         * turned on is confirmed here, so the patient is not stuck on it.
+         */
+        if (bypass
+                && payment.getStatus() == PaymentStatus.PENDING) {
+
+            BigDecimal credit =
+                    payment.getCreditApplied() == null
+                            ? BigDecimal.ZERO
+                            : payment.getCreditApplied();
+
+            markBypassed(
+                    payment,
+                    payment.getAmount().subtract(credit)
+            );
+
+            return paymentRepository
+                    .findByReference(payment.getReference())
+                    .orElse(payment);
+        }
+
+        /*
          * Connect Gateway payment identifier is the FNPH reference.
          */
         if (payment.getReference() == null
@@ -640,10 +705,43 @@ public class PaymentService {
      *
      * This method is intentionally idempotent.
      */
+    private void markBypassed(
+            Payment payment,
+            BigDecimal amount
+    ) {
+
+        log.warn(
+                "PAYMENT BYPASS: confirming {} without Remita",
+                payment.getReference()
+        );
+
+        markVerified(
+                payment,
+                amount,
+                "PAYMENT BYPASS - Remita not called",
+                true
+        );
+    }
+
     private void markVerified(
             Payment payment,
             BigDecimal amount,
             String note
+    ) {
+
+        markVerified(
+                payment,
+                amount,
+                note,
+                false
+        );
+    }
+
+    private void markVerified(
+            Payment payment,
+            BigDecimal amount,
+            String note,
+            boolean bypassed
     ) {
 
         /*
@@ -675,7 +773,7 @@ public class PaymentService {
         );
 
         payment.setReconciliationStatus(
-                "MATCHED"
+                bypassed ? BYPASSED : "MATCHED"
         );
 
         /*
@@ -761,9 +859,12 @@ public class PaymentService {
         notifications.notifyPatient(
                 payment.getPatient(),
                 NotificationType.PAYMENT_SUCCESS,
-                "Payment confirmed",
-                "Your payment has been confirmed. You can now choose a date and time "
-                        + "for your consultation.",
+                bypassed ? "Ready to book" : "Payment confirmed",
+                bypassed
+                        ? "No payment is needed at the moment. You can now choose a date "
+                                + "and time for your consultation."
+                        : "Your payment has been confirmed. You can now choose a date and time "
+                                + "for your consultation.",
                 "/portal/booking",
                 "Payment",
                 payment.getId()
@@ -781,9 +882,12 @@ public class PaymentService {
                 "HIM",
                 null,
                 NotificationType.PAYMENT_VERIFIED_HIM,
-                "Patient payment confirmed",
-                "Payment %s of %s %s has been confirmed for patient %s. "
-                        + "The patient can now proceed with consultation booking."
+                bypassed ? "Booking allowed without payment" : "Patient payment confirmed",
+                (bypassed
+                        ? "Payment %s of %s %s for patient %s was confirmed without Remita "
+                                + "(payment bypass is on). No money was collected."
+                        : "Payment %s of %s %s has been confirmed for patient %s. "
+                                + "The patient can now proceed with consultation booking.")
                         .formatted(
                                 payment.getReference(),
                                 payment.getCurrency(),

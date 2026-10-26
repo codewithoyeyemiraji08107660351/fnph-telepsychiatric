@@ -160,7 +160,10 @@ public class ReconciliationService {
                 && payment.getAmount().subtract(credit).signum() > 0;
         boolean neverStarted = payment.getStatus() == PaymentStatus.FAILED
                 && payment.getInitiationResponse() == null;
-        return charged && !neverStarted;
+        // Confirmed under the payment bypass: Remita was never called, so
+        // asking it would only report the payment missing.
+        boolean bypassed = PaymentService.isBypassed(payment);
+        return charged && !neverStarted && !bypassed;
     }
 
     private void raise(ReconciliationRun run, Payment payment,

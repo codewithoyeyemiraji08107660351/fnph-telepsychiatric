@@ -49,6 +49,15 @@ public class RemitaProperties {
      */
     private boolean acceptChargeSuccessAsPaid = false;
 
+    /**
+     * TEMPORARY. True skips Remita entirely: every consultation payment is
+     * confirmed at once without calling Remita, so patients can book while
+     * live credentials are not available. Payments made this way are marked
+     * BYPASSED, left out of reconciliation, and shown as such to Finance.
+     * The application refuses to start with this on against a live host.
+     */
+    private boolean bypass = false;
+
     private int readTimeoutSeconds = 30;
     private int connectTimeoutSeconds = 10;
 

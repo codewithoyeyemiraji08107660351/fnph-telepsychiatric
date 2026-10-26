@@ -202,6 +202,11 @@ application:
       # patient could book without paying. Off unless set. The application
       # will not start with it on against a live Remita host.
       accept-charge-success-as-paid: ${REMITA_ACCEPT_CHARGE_SUCCESS_AS_PAID:false}
+      # TEMPORARY. True skips Remita entirely: consultation payments are
+      # confirmed at once without calling Remita, so patients can book while
+      # live credentials are not available. Marked BYPASSED for Finance and
+      # left out of reconciliation. Refused against a live Remita host.
+      bypass: ${REMITA_BYPASS:false}
 
 
   storage:
