@@ -72,17 +72,22 @@ public class ApprovalController {
                 results.map(this::toResponse).getContent()));
     }
 
-    /** The four multidisciplinary team roles, and nothing else. */
+    /**
+     * The consulting doctor and the four multidisciplinary team roles, and
+     * nothing else. Doctors are listed like the rest of the team: the rota is
+     * no longer a precondition, it only marks a doctor unavailable.
+     */
     private static final List<String> ASSIGNABLE_ROLES =
-            List.of("NURSING", "PHARMACIST", "LABORATORY_TECHNICIAN", "HIM");
+            List.of("DOCTOR", "NURSING", "PHARMACIST", "LABORATORY_TECHNICIAN", "HIM");
 
     @GetMapping("/assignable-staff")
     @PreAuthorize("hasAuthority(T(com.fnph.telepsychiatric.authz.Permissions).APPOINTMENT_ASSIGN_TEAM)")
     @Operation(
             summary = "Staff assignable to a consultation team",
             description = """
-                    Active hospital staff holding one of the four team roles, with the role
-                    each holds, so the Hub Coordinator can name a team when approving.
+                    Active hospital staff holding the doctor role or one of the four team
+                    roles, with the role each holds, so the Hub Coordinator can name a team
+                    when approving.
 
                     **Gated on `appointment.assign_team`, not `user.read`.** The coordinator
                     has to name a nurse and a pharmacist to approve an appointment and does
@@ -99,7 +104,7 @@ public class ApprovalController {
                     """)
     @ApiResponse(responseCode = "200", description = "Assignable staff, ordered by name.")
     public ResponseEntity<List<Map<String, Object>>> assignableStaff(
-            @Parameter(description = "Limit to one of the four team role codes. Omit for all.",
+            @Parameter(description = "Limit to one role code (DOCTOR or a team role). Omit for all.",
                     example = "PHARMACIST")
             @RequestParam(required = false) String role) {
 

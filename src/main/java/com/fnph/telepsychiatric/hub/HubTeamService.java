@@ -44,8 +44,8 @@ import java.util.Set;
  * AWAITING_APPROVAL. After approval each role locks when its part of the work
  * is done, because the record must keep showing who actually did it:
  * <ul>
- *   <li>Doctor: until the session starts. Checked against the doctor's
- *       availability and their other consultations, as at approval.</li>
+ *   <li>Doctor: until the session starts. Any active doctor, unless marked
+ *       unavailable then or already on another consultation at that time.</li>
  *   <li>Nurse and HIM officer: until they record their part complete.</li>
  *   <li>Pharmacist and laboratory technician: until the bundle is released.
  *       Their unsubmitted reviews move with the role, including reviews that
@@ -268,11 +268,11 @@ public class HubTeamService {
             throw new BookingException("This consultation has no end time, so the doctor's "
                     + "availability cannot be checked");
         }
-        if (!availabilityRepository.isAvailable(doctor.getId(),
-                appointment.getAppointmentDate(), appointment.getScheduledEndAt())) {
-            throw new BookingException(
-                    doctor.getFullName() + " is not marked available for the whole of that slot");
-        }
+        availabilityRepository.unavailableReason(doctor.getId(),
+                        appointment.getAppointmentDate(), appointment.getScheduledEndAt())
+                .ifPresent(why -> {
+                    throw new BookingException(doctor.getFullName() + " " + why);
+                });
         // Both pathways: a centre consultation at the same time is as much a
         // clash as an FNPH one.
         if (doctorCalendar.busy(doctor.getId(), appointment.getAppointmentDate(),

@@ -188,11 +188,12 @@ public class CentreBookingService {
             throw new CentreBookingException("A consulting doctor is required");
         }
         teamService.assertEligible(doctor, Role.DOCTOR);
-        if (!availabilityRepository.isAvailable(doctor.getId(),
-                appointment.getAppointmentDate(), appointment.getScheduledEndAt())) {
-            throw new CentreBookingException(
-                    "That doctor is not marked available for the whole of that slot");
-        }
+        // Any active doctor can be assigned; only one marked unavailable is refused.
+        availabilityRepository.unavailableReason(doctor.getId(),
+                        appointment.getAppointmentDate(), appointment.getScheduledEndAt())
+                .ifPresent(why -> {
+                    throw new CentreBookingException(doctor.getFullName() + " " + why);
+                });
         if (doctorCalendar.busy(doctor.getId(), appointment.getAppointmentDate(),
                 appointment.getScheduledEndAt(), null, appointment.getId())) {
             throw new CentreBookingException(doctor.getFullName()

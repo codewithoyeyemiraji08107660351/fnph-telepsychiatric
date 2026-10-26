@@ -272,11 +272,12 @@ public class BookingService {
         if (assignment.doctor() == null) {
             throw new BookingException("A consulting doctor is required");
         }
-        if (!availabilityRepository.isAvailable(assignment.doctor().getId(),
-                appointment.getAppointmentDate(), appointment.getScheduledEndAt())) {
-            throw new BookingException(
-                    "That doctor is not marked available for the whole of that slot");
-        }
+        // Any active doctor can be assigned; only one marked unavailable is refused.
+        availabilityRepository.unavailableReason(assignment.doctor().getId(),
+                        appointment.getAppointmentDate(), appointment.getScheduledEndAt())
+                .ifPresent(why -> {
+                    throw new BookingException(assignment.doctor().getFullName() + " " + why);
+                });
         if (doctorCalendar.busy(assignment.doctor().getId(), appointment.getAppointmentDate(),
                 appointment.getScheduledEndAt(), appointment.getId(), null)) {
             throw new BookingException(assignment.doctor().getFullName()
@@ -363,7 +364,7 @@ public class BookingService {
     /**
      * Assigns the consulting clinician.
      *
-     * Availability is checked here rather than only at approval, so a
+     * Leave is checked here rather than only at approval, so a
      * coordinator finds out immediately instead of after filling in the rest of
      * the team.
      */
@@ -374,11 +375,11 @@ public class BookingService {
         if (doctor == null) {
             throw new BookingException("A doctor is required");
         }
-        if (!availabilityRepository.isAvailable(doctor.getId(),
-                appointment.getAppointmentDate(), appointment.getScheduledEndAt())) {
-            throw new BookingException(
-                    "That doctor is not marked available for the whole of that slot");
-        }
+        availabilityRepository.unavailableReason(doctor.getId(),
+                        appointment.getAppointmentDate(), appointment.getScheduledEndAt())
+                .ifPresent(why -> {
+                    throw new BookingException(doctor.getFullName() + " " + why);
+                });
         if (doctorCalendar.busy(doctor.getId(), appointment.getAppointmentDate(),
                 appointment.getScheduledEndAt(), appointment.getId(), null)) {
             throw new BookingException(doctor.getFullName()
