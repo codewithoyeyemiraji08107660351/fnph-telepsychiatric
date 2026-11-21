@@ -46,7 +46,7 @@ public class ReleaseService {
     private final PrescriptionRepository prescriptionRepository;
     private final InvestigationRepository investigationRepository;
     private final FollowUpRepository followUpRepository;
-    private final com.fnph.telepsychiatric.document.IssuedDocumentService documentService;
+    private final IssuedDocumentService documentService;
     private final com.fnph.telepsychiatric.document.render.DocumentRenderer renderer;
     private final com.fnph.telepsychiatric.centre.CentreReferralService centreDelivery;
     private final ReleaseBundleComponentRepository componentRepository;
@@ -56,10 +56,11 @@ public class ReleaseService {
     /**
      * Creates the bundle with a row per expected component.
      *
-     * The clinical note is always required. The other three start as required
-     * and become not-required the moment the doctor says none is needed, which
-     * is what stops a bundle waiting forever for a document nobody intends to
-     * write.
+     * The clinical note is always required. The follow-up waits until the
+     * doctor records one or says none is needed. The prescription and the
+     * investigation are only waited on once the doctor issues one, because
+     * only then is there a pharmacy or laboratory review to finish; a
+     * consultation that issues neither does not wait on either.
      */
     @Transactional
     public ReleaseBundle openFor(Appointment appointment) {

@@ -50,8 +50,34 @@ public class ReleaseBundleComponent extends BaseEntity {
     @Column(name = "blocked_reason", length = 500)
     private String blockedReason;
 
-    /** Done, or deliberately not needed. Either way it does not hold the bundle. */
+    /**
+     * Done, deliberately not needed, or never asked for. None of these holds
+     * the bundle.
+     *
+     * A prescription or investigation the doctor never issued has nothing for
+     * a pharmacist or laboratory technician to review. It used to count as
+     * outstanding until the doctor also clicked "not needed", so a
+     * consultation with no investigation sat on the release desk waiting on
+     * the laboratory. Issuing one creates its review and sets isRequired,
+     * which makes it outstanding again until the review is submitted.
+     */
     public boolean isSettled() {
-        return Boolean.TRUE.equals(isComplete) || Boolean.TRUE.equals(notRequired);
+        if (Boolean.TRUE.equals(isComplete) || Boolean.TRUE.equals(notRequired)) {
+            return true;
+        }
+        return !Boolean.TRUE.equals(isRequired) && isReviewedComponent();
+    }
+
+    /** Settled because nothing was issued, not because anything was done. */
+    public boolean isNotRequested() {
+        return !Boolean.TRUE.equals(isComplete)
+                && !Boolean.TRUE.equals(notRequired)
+                && !Boolean.TRUE.equals(isRequired)
+                && isReviewedComponent();
+    }
+
+    private boolean isReviewedComponent() {
+        return componentType == ComponentType.PRESCRIPTION
+                || componentType == ComponentType.INVESTIGATION;
     }
 }
